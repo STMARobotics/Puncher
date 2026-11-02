@@ -1,0 +1,166 @@
+{
+  "schemaVersion": 1,
+  "records": [
+    {
+      "pk": "APP#PUNCHER",
+      "sk": "SCHEMA",
+      "v": 1,
+      "schemaVersion": 1,
+      "timezone": "America/Chicago",
+      "durationUnit": "seconds",
+      "reportingYearConvention": "ending year; June 2 through June 1 inclusive"
+    },
+    {
+      "pk": "MEMBER#11111111-1111-4111-8111-111111111111",
+      "sk": "METADATA",
+      "v": 1,
+      "schemaVersion": 1,
+      "memberId": "11111111-1111-4111-8111-111111111111",
+      "displayName": "Alex Example",
+      "memberKind": "student",
+      "active": true,
+      "gsi1pk": "MEMBERS",
+      "gsi1sk": "11111111-1111-4111-8111-111111111111"
+    },
+    {
+      "pk": "IDENTITY#synthetic-google-sub",
+      "sk": "METADATA",
+      "v": 1,
+      "schemaVersion": 1,
+      "googleSub": "synthetic-google-sub",
+      "memberId": "11111111-1111-4111-8111-111111111111",
+      "email": "alex.example@stmarobotics.org",
+      "enabled": true,
+      "roles": [
+        "student",
+        "stats:student"
+      ]
+    },
+    {
+      "pk": "MEMBER#11111111-1111-4111-8111-111111111111",
+      "sk": "SHOP#2026-06-01T18:00:00.000Z#synthetic-session",
+      "v": 1,
+      "schemaVersion": 1,
+      "sessionId": "synthetic-session",
+      "memberId": "11111111-1111-4111-8111-111111111111",
+      "shopDate": "2026-06-01",
+      "reportingYear": 2026,
+      "startedAt": "2026-06-01T18:00:00.000Z",
+      "endedAt": "2026-06-01T19:00:00.000Z",
+      "cutoffAt": "2026-06-02T05:00:00.000Z",
+      "status": "completed",
+      "creditedSeconds": 3600
+    },
+    {
+      "pk": "MEMBER#11111111-1111-4111-8111-111111111111",
+      "sk": "SHOP#2026-06-01T20:00:00.000Z#synthetic-forfeit",
+      "v": 1,
+      "schemaVersion": 1,
+      "sessionId": "synthetic-forfeit",
+      "memberId": "11111111-1111-4111-8111-111111111111",
+      "shopDate": "2026-06-01",
+      "reportingYear": 2026,
+      "startedAt": "2026-06-01T20:00:00.000Z",
+      "cutoffAt": "2026-06-02T05:00:00.000Z",
+      "status": "forfeited_missing_checkout",
+      "creditedSeconds": 0
+    },
+    {
+      "pk": "MEMBER#11111111-1111-4111-8111-111111111111",
+      "sk": "LEGACYSHOP#2025-04-01#synthetic-import",
+      "v": 1,
+      "schemaVersion": 1,
+      "memberId": "11111111-1111-4111-8111-111111111111",
+      "shopDate": "2025-04-01",
+      "reportingYear": 2025,
+      "status": "approved",
+      "creditedSeconds": 1800,
+      "provenance": {
+        "importKey": "synthetic-import",
+        "batchId": "synthetic-batch"
+      }
+    },
+    {
+      "pk": "MEMBER#11111111-1111-4111-8111-111111111111",
+      "sk": "LEGACYSHOP#UNDATED#synthetic-undated",
+      "v": 1,
+      "schemaVersion": 1,
+      "memberId": "11111111-1111-4111-8111-111111111111",
+      "status": "quarantined",
+      "provenance": {
+        "importKey": "synthetic-undated",
+        "batchId": "synthetic-batch",
+        "reasons": [
+          "missing_hours",
+          "missing_date"
+        ]
+      }
+    },
+    {
+      "pk": "EVENT#synthetic-event",
+      "sk": "METADATA",
+      "v": 1,
+      "schemaVersion": 1,
+      "eventId": "synthetic-event",
+      "title": "Synthetic open house",
+      "eventDate": "2026-06-02",
+      "reportingYear": 2027,
+      "durationSeconds": 5400,
+      "mentorSub": "synthetic-mentor",
+      "version": 1
+    },
+    {
+      "pk": "MEMBER#11111111-1111-4111-8111-111111111111",
+      "sk": "VOLUNTEER#2026-06-02#synthetic-award",
+      "v": 1,
+      "schemaVersion": 1,
+      "awardId": "synthetic-award",
+      "memberId": "11111111-1111-4111-8111-111111111111",
+      "eventId": "synthetic-event",
+      "title": "Synthetic open house",
+      "eventDate": "2026-06-02",
+      "reportingYear": 2027,
+      "status": "approved",
+      "creditedSeconds": 5400,
+      "recordedBy": "synthetic-mentor",
+      "recordedAt": "2026-06-02T18:00:00.000Z",
+      "eventVersion": 1
+    },
+    {
+      "pk": "MEMBER#11111111-1111-4111-8111-111111111111",
+      "sk": "VOLUNTEER#2025-04-01#synthetic-pending",
+      "v": 1,
+      "schemaVersion": 1,
+      "awardId": "synthetic-pending",
+      "memberId": "11111111-1111-4111-8111-111111111111",
+      "title": "Synthetic legacy outreach",
+      "eventDate": "2025-04-01",
+      "reportingYear": 2025,
+      "status": "pending_review",
+      "creditedSeconds": 7200,
+      "originalApproval": "",
+      "provenance": {
+        "importKey": "synthetic-pending",
+        "batchId": "synthetic-batch"
+      }
+    }
+  ],
+  "expected": {
+    "careerShopSeconds": 5400,
+    "careerVolunteerSeconds": 5400,
+    "years": {
+      "2025": {
+        "shopSeconds": 1800,
+        "volunteerSeconds": 0
+      },
+      "2026": {
+        "shopSeconds": 3600,
+        "volunteerSeconds": 0
+      },
+      "2027": {
+        "shopSeconds": 0,
+        "volunteerSeconds": 5400
+      }
+    }
+  }
+}

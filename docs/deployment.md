@@ -1,0 +1,36 @@
+# AWS DEPLOYMENT
+
+The proposed domain is puncher.7028robotics.com. No AWS resources were deployed during implementation. Use a dedicated development account/environment before production. All application resources run in us-east-2; the CloudFront DNS certificate runs in us-east-1. FMEA was read only and its production resources, zone ID, OAuth client ID and IAM roles were not copied.
+
+Set these explicit environment values (or corresponding CDK contexts in infra/config.ts): PUNCHER_ACCOUNT, PUNCHER_ENV=dev|prod, PUNCHER_DOMAIN, PUNCHER_ZONE_NAME, PUNCHER_ZONE_ID, GOOGLE_CLIENT_ID, STATS_URL, PUNCHER_GITHUB_REPOSITORY=owner/repo. The OAuth web client must allow the chosen HTTPS domain and local http://localhost:5173 if used. The confirmed Workspace domain is stmarobotics.org. Public config.json contains only this client ID, domain, timezone and display link; never put secrets there. Google verifies its JWT signature using Google's maintained library, then server checks issuer, audience, exp, subject, email verification and hosted domain. Every request rechecks persisted app permissions.
+
+Use AWS SSO for initial infrastructure setup. Bootstrap both regions with a Puncher-specific qualifier and toolkit stack, and an execution policy restricted to Puncher resources plus the selected hosted zone. Review that policy for your account before creating it:
+
+```powershell
+npx cdk bootstrap aws://ACCOUNT/us-east-1 aws://ACCOUNT/us-east-2 --qualifier puncher --toolkit-stack-name CDKToolkit-Puncher --cloudformation-execution-policies arn:aws:iam::ACCOUNT:policy/PuncherDeploymentExecution
+npm ci
+npm run build
+npm run cdk:synth
+npx cdk diff --app "npx tsx infra/app.ts"
+npm run cdk:deploy
+```
+
+`-c validation=true` uses deliberate placeholder account/zone/client values for CI synthesis only. It is not a deployment configuration. Frontend build must exist before synthesis. Certificate, backend and frontend are separate stacks with explicit cross-region certificate references, retained records/PITR/deletion protection, private S3/OAC, and same-origin /api and /api/* behaviors. API responses are uncached; Authorization, device header, Origin and cookies forward to the API. SPA rewrites apply only to static frontend behavior. Default Lambda URLs are absent; direct API Gateway calls still require authorizers and backend checks. The public setup endpoint validates a high-entropy device credential and Origin and sets a secure HttpOnly SameSite=Strict cookie. The direct scan endpoint accepts X-Device-Token as an alternative and enforces exact Origin for browser writes.
+
+Create/import the account's GitHub OIDC provider operationally if absent. Synthesize/deploy only the deployment identity stack with `-c identity=true`; its trust is scoped to the configured repository and GitHub environment `puncher-dev` or `puncher-prod`, audience sts.amazonaws.com. It can assume only Puncher-qualified bootstrap roles. Configure environment protections, deployment role ARN and explicit config values as GitHub environment variables. The workflow uses OIDC and never AWS access keys. Do not grant FMEA's role to this repository. Use branch/main approval protection on the production GitHub environment. The GitHub role's downstream execution policy is an account setup responsibility, not AdministratorAccess by default.
+
+After deployment use an authorized operator shell with APP_ENV=dev|prod, TABLE_NAME from output, no local endpoint/fixture flags, AWS_REGION=us-east-2, GOOGLE_CLIENT_ID and ALLOWED_ORIGIN set:
+
+```powershell
+npm run provision -- schema
+$env:CONFIRM_BOOTSTRAP='true'
+npm run provision -- bootstrap-admin VERIFIED_GOOGLE_SUB administrator@stmarobotics.org
+```
+
+Get the stable subject from a server-verified Google credential for the intended account; never copy an unverified decoded token. This is an AWS-authorized command, not an anonymous API. Bootstrap is once only. Additional admins and members are provisioned through the admin workspace. Identity assignment accepts the exact Google subject; there is no email-first automatic linking in v1. Real barcodes and student subjects/emails are absent from Airtable and must be explicitly mapped. Use docs/card-mappings.example.json for the separate card mapping CLI. The device creation form returns a credential once; use it on the kiosk setup screen and store it only in its HttpOnly cookie. Devices expire after 180 days. Provision a replacement, reauthorize the kiosk once, then revoke the old device. Revocation immediately blocks scans independent of any adult Google session.
+
+Subscribe operations staff to the AlarmTopicArn output and confirm delivery before launch. Alarms cover handler errors, API server errors, cleanup missing invocation and DLQ messages. EventBridge Scheduler invokes local midnight with America/Chicago timezone, flexible window OFF, retries and failure queue. Lambda async failure destination also catches execution failures. Inspect a failed invocation and rerun Cleanup with `{}`; pagination and exact-session conditional transactions safely catch up. Scan/read APIs enforce cutoff while cleanup is delayed. No restore/adjustment endpoint exists for forfeited time.
+
+Activate the exact case-sensitive user-defined `AppName` key in AWS Billing → Cost allocation tags (https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/activating-tags.html). Then filter/group Cost Explorer by AppName=Puncher and Environment. Tagging alone does not activate billing allocation. Confirm both-region resources using Resource Groups Tag Editor or Resource Explorer, including table, buckets, CloudFront, functions/log groups, IAM, queues, alarms, topics, API and certificate where tagging is supported. Every supported resource must have AppName=Puncher, never FMEA/Stats/Timeclock. Production table and shared table read charges belong to Puncher; see stats-integration.md.
+
+CDK's current bundled minimatch has a moderate development-time denial-of-service advisory (GHSA-g3hv-75wg-m249) reported by npm audit with no upstream compatible fix. It is part of infrastructure packaging, not an exposed request path; only trusted repository asset globs are used. Recheck npm audit and the CDK release before production deployment. Do not claim a clean dependency security audit until upstream resolves it.

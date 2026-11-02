@@ -1,0 +1,437 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://puncher.7028robotics.com/contracts/stats-reader.v1.json",
+  "title": "Puncher canonical reader records v1",
+  "schemaVersion": 1,
+  "timezone": "America/Chicago",
+  "durationUnit": "seconds",
+  "reportingYear": {
+    "start": "June 2 00:00 America/Chicago",
+    "endExclusive": "June 2 of ending year 00:00 America/Chicago",
+    "storedAs": "ending year"
+  },
+  "indexes": {
+    "GSI1": {
+      "pk": "gsi1pk",
+      "sk": "gsi1sk",
+      "rosterPartition": "MEMBERS"
+    },
+    "GSI2": {
+      "pk": "gsi2pk",
+      "sk": "gsi2sk"
+    }
+  },
+  "eligibility": {
+    "shop": "completed; endedAt < cutoffAt; nonnegative integer creditedSeconds",
+    "legacyAndVolunteer": "approved; valid historical local date and nonnegative integer creditedSeconds",
+    "expiredActive": "zero; Stats never writes expiration"
+  },
+  "writerInternalPrefixes": [
+    "CARD#",
+    "BINDING#",
+    "CURRENT",
+    "ACTIVE",
+    "OP#",
+    "RATE#",
+    "DEVICE#",
+    "AUDIT",
+    "IMPORT#",
+    "IMPORTKEY#",
+    "REVIEWS",
+    "SOURCE#",
+    "SUMMARY#"
+  ],
+  "definitions": {
+    "metadata": {
+      "type": "object",
+      "required": [
+        "pk",
+        "sk",
+        "schemaVersion",
+        "timezone",
+        "durationUnit",
+        "reportingYearConvention"
+      ],
+      "properties": {
+        "pk": {
+          "type": "string",
+          "pattern": "^APP#PUNCHER$"
+        },
+        "sk": {
+          "type": "string",
+          "pattern": "^SCHEMA$"
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "timezone": {
+          "const": "America/Chicago"
+        },
+        "durationUnit": {
+          "const": "seconds"
+        },
+        "reportingYearConvention": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "member": {
+      "type": "object",
+      "required": [
+        "pk",
+        "sk",
+        "schemaVersion",
+        "memberId",
+        "displayName",
+        "memberKind",
+        "active"
+      ],
+      "properties": {
+        "pk": {
+          "type": "string",
+          "pattern": "^MEMBER#.+$"
+        },
+        "sk": {
+          "type": "string",
+          "pattern": "^METADATA$"
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "memberId": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "memberKind": {
+          "enum": [
+            "student",
+            "mentor"
+          ]
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "gsi1pk": {
+          "const": "MEMBERS"
+        },
+        "gsi1sk": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "identity": {
+      "type": "object",
+      "required": [
+        "pk",
+        "sk",
+        "schemaVersion",
+        "googleSub",
+        "email",
+        "enabled",
+        "roles"
+      ],
+      "properties": {
+        "pk": {
+          "type": "string",
+          "pattern": "^IDENTITY#.+$"
+        },
+        "sk": {
+          "type": "string",
+          "pattern": "^METADATA$"
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "googleSub": {
+          "type": "string"
+        },
+        "memberId": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "roles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "shop": {
+      "type": "object",
+      "required": [
+        "pk",
+        "sk",
+        "schemaVersion",
+        "sessionId",
+        "memberId",
+        "shopDate",
+        "reportingYear",
+        "startedAt",
+        "cutoffAt",
+        "status",
+        "creditedSeconds"
+      ],
+      "properties": {
+        "pk": {
+          "type": "string",
+          "pattern": "^MEMBER#.+$"
+        },
+        "sk": {
+          "type": "string",
+          "pattern": "^SHOP#.+#.+$"
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "memberId": {
+          "type": "string"
+        },
+        "shopDate": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "reportingYear": {
+          "type": "integer"
+        },
+        "startedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T.*Z$"
+        },
+        "cutoffAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T.*Z$"
+        },
+        "endedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T.*Z$"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "completed",
+            "forfeited_missing_checkout"
+          ]
+        },
+        "creditedSeconds": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": true
+    },
+    "legacyShop": {
+      "type": "object",
+      "required": [
+        "pk",
+        "sk",
+        "schemaVersion",
+        "memberId",
+        "status",
+        "provenance"
+      ],
+      "properties": {
+        "pk": {
+          "type": "string",
+          "pattern": "^MEMBER#.+$"
+        },
+        "sk": {
+          "type": "string",
+          "pattern": "^LEGACYSHOP#.+#.+$"
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "memberId": {
+          "type": "string"
+        },
+        "shopDate": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "reportingYear": {
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "approved",
+            "pending_review",
+            "quarantined",
+            "voided"
+          ]
+        },
+        "creditedSeconds": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "provenance": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
+    "event": {
+      "type": "object",
+      "required": [
+        "pk",
+        "sk",
+        "schemaVersion",
+        "eventId",
+        "title",
+        "eventDate",
+        "reportingYear",
+        "durationSeconds",
+        "mentorSub",
+        "version"
+      ],
+      "properties": {
+        "pk": {
+          "type": "string",
+          "pattern": "^EVENT#.+$"
+        },
+        "sk": {
+          "type": "string",
+          "pattern": "^METADATA$"
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "eventId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "eventDate": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "reportingYear": {
+          "type": "integer"
+        },
+        "durationSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "mentorSub": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "volunteer": {
+      "type": "object",
+      "required": [
+        "pk",
+        "sk",
+        "schemaVersion",
+        "awardId",
+        "memberId",
+        "title",
+        "status"
+      ],
+      "properties": {
+        "pk": {
+          "type": "string",
+          "pattern": "^MEMBER#.+$"
+        },
+        "sk": {
+          "type": "string",
+          "pattern": "^VOLUNTEER#.+#.+$"
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "awardId": {
+          "type": "string"
+        },
+        "memberId": {
+          "type": "string"
+        },
+        "eventId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "eventDate": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "reportingYear": {
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "approved",
+            "pending_review",
+            "quarantined",
+            "voided"
+          ]
+        },
+        "creditedSeconds": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "recordedBy": {
+          "type": "string"
+        },
+        "recordedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T.*Z$"
+        },
+        "eventVersion": {
+          "type": "integer"
+        },
+        "provenance": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/definitions/metadata"
+    },
+    {
+      "$ref": "#/definitions/member"
+    },
+    {
+      "$ref": "#/definitions/identity"
+    },
+    {
+      "$ref": "#/definitions/shop"
+    },
+    {
+      "$ref": "#/definitions/legacyShop"
+    },
+    {
+      "$ref": "#/definitions/event"
+    },
+    {
+      "$ref": "#/definitions/volunteer"
+    }
+  ]
+}
