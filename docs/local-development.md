@@ -6,6 +6,7 @@ Use Node 24 or newer, npm, and Docker Desktop. From this repository:
 npm ci
 Copy-Item .env.example .env
 docker compose up -d
+docker compose exec -u 0 dynamodb chown -R 1000:1000 /home/dynamodblocal/data
 npm run db:init
 npm run seed
 npm run dev
