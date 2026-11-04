@@ -2,14 +2,16 @@ import { App, Stack, aws_dynamodb as ddb, aws_lambda as lambda } from 'aws-cdk-l
 import { Template } from 'aws-cdk-lib/assertions';
 import { expect, it } from 'vitest';
 import { resolve } from 'node:path';
-import { IntegrationStack } from '../infra/integration-stack';
+import { IntegrationStack } from '../lib/integration-stack';
+import { BackendStack } from '../lib/backend-stack';
+import { config as deploymentConfig } from '../lib/config';
 import {
   activityStream,
   configureActivityPublisher,
   integrationSettings,
   activityInputTemplate,
   activityOutboxPrefixes,
-} from '../infra/activity-publisher';
+} from '../lib/activity-publisher';
 it('retains the separate organization bus and filters its archive', () => {
   const app = new App({ outdir: resolve('work/activity-hub-cdk') });
   const stack = new IntegrationStack(app, 'organization-integration', {
@@ -99,4 +101,39 @@ it('grants no outbox prefixes when integration is absent', () => {
     env: { account: '111111111111', region: 'us-east-2' },
   });
   expect(activityOutboxPrefixes(stack, 'puncher')).toEqual([]);
+});
+it('wires capture into the current backend while preserving its configured table and production runtime', () => {
+  const app = new App({
+    outdir: resolve('work/activity-backend-cdk'),
+    context: { activityIntegration: {
+      orgId: 'example-team',
+      busArn: 'arn:aws:events:us-east-2:111111111111:event-bus/activity',
+      captureEnabled: true, pipeEnabled: true,
+    } },
+  });
+  const stack = new BackendStack(app, 'compat-backend', {
+    env: { account: '111111111111', region: 'us-east-2' },
+  }, { ...deploymentConfig, account: '111111111111', tableName: 'compat-puncher-records' });
+  const t = Template.fromStack(stack);
+  t.hasResourceProperties('AWS::DynamoDB::Table', {
+    TableName: 'compat-puncher-records', StreamSpecification: { StreamViewType: 'NEW_IMAGE' },
+    DeletionProtectionEnabled: true,
+  });
+  t.resourceCountIs('AWS::Pipes::Pipe', 1);
+  const functions = Object.values(t.findResources('AWS::Lambda::Function')) as any[];
+  for (const name of ['staff', 'kiosk', 'cleanup']) {
+    const fn = functions.find(r => r.Properties.FunctionName === 'puncher-' + name);
+    expect(fn.Properties.Environment.Variables).toMatchObject({
+      APP_ENV: 'prod', INTEGRATION_ENABLED: 'true', INTEGRATION_ORG_ID: 'example-team',
+    });
+  }
+  const policies = t.findResources('AWS::IAM::Policy');
+  for (const owner of ['Kiosk', 'Cleanup']) {
+    const policy = Object.entries(policies).find(([id]) => id.startsWith(owner + 'ServiceRoleDefaultPolicy'))?.[1];
+    expect(JSON.stringify(policy)).toContain('OUTBOX#example-team#puncher#*');
+    expect(JSON.stringify(policy)).not.toContain('OUTBOX#*');
+  }
+  const totalsPolicy = Object.entries(policies).find(([id]) => id.startsWith('ShopTotalsServiceRoleDefaultPolicy'))?.[1];
+  expect(totalsPolicy).toBeDefined();
+  expect(JSON.stringify(totalsPolicy)).not.toContain('OUTBOX#');
 });

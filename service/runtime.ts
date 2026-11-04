@@ -25,15 +25,14 @@ export function runtime() {
   );
   if (!local)
     assert(
-      process.env.APP_ENV === "dev" || process.env.APP_ENV === "prod",
-      "Select APP_ENV explicitly.",
+      process.env.APP_ENV === "prod",
+      "APP_ENV must be local or prod.",
       500,
     );
-  if (local && !endpoint)
+  if (local)
     assert(
-      process.env.ALLOW_CLOUD_DEV === "true" &&
-        process.env.TABLE_NAME?.startsWith("puncher-dev-"),
-      "Cloud-backed development requires ALLOW_CLOUD_DEV and an explicit puncher-dev-* table.",
+      !!endpoint,
+      "Local mode requires a local DynamoDB endpoint.",
       500,
     );
   return {

@@ -1,20 +1,28 @@
-name: Puncher checks
-on: [push, pull_request]
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
 permissions:
   contents: read
+
 jobs:
-  verify:
+  validate:
+    name: Build, Test, and Synthesize
     runs-on: ubuntu-latest
     services:
       dynamodb:
         image: amazon/dynamodb-local:latest
-        ports: ['8000:8000']
+        ports: ["8000:8000"]
     env:
       APP_ENV: local
       TABLE_NAME: puncher-local
       DYNAMODB_ENDPOINT: http://127.0.0.1:8000
       AWS_REGION: us-east-2
-      LOCAL_AUTH_FIXTURES: 'true'
+      LOCAL_AUTH_FIXTURES: "true"
       ALLOWED_ORIGIN: http://localhost:5173
     steps:
       - uses: actions/checkout@v7
@@ -24,17 +32,43 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check:activity-contract
-      - run: npm run build
-      - run: npm run cdk:synth -- -c validation=true
+      - run: npm run check
       - name: Synthesize the separate organization integration stack
         run: npm run cdk:synth:integration
-      - run: npm test
       - run: npm run test:db
       - run: npm run db:init && npm run seed
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: puncher-browser-failures
           path: test-results
+
+  deploy:
+    name: Deploy production
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: puncher
+    concurrency:
+      group: puncher
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run cdk:synth
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::738044534240:role/puncher-github-deploy
+          aws-region: us-east-2
+      - run: mkdir -p work
+      - run: npm run cdk:deploy -- --require-approval never --outputs-file work/deployment-outputs.json

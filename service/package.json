@@ -1,0 +1,24 @@
+{
+  "name": "puncher-service",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node --import tsx ../scripts/bundle.ts",
+    "dev": "node --env-file-if-exists=../.env --import tsx local.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1161.0",
+    "@aws-sdk/lib-dynamodb": "^3.1161.0",
+    "@js-temporal/polyfill": "^0.5.1",
+    "csv-parse": "^7.0.3",
+    "google-auth-library": "^11.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

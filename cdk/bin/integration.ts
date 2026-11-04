@@ -1,6 +1,6 @@
 // Separate entry point: existing deployment commands do not deploy the organization bus.
-import { App, DefaultStackSynthesizer, Tags } from 'aws-cdk-lib';
-import { IntegrationStack } from './integration-stack';
+import { App, Tags } from 'aws-cdk-lib';
+import { IntegrationStack } from '../lib/integration-stack';
 const app = new App();
 const validation =
   app.node.tryGetContext('validation') === 'true' || app.node.tryGetContext('validation') === true;
@@ -15,5 +15,4 @@ new IntegrationStack(app, 'organization-' + environment + '-integration', {
   orgId,
   environment,
   env: { account, region: 'us-east-2' },
-  synthesizer: new DefaultStackSynthesizer({ qualifier: 'puncher' }),
 });

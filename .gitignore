@@ -1,7 +1,7 @@
 node_modules/
 dist/
 cdk.out/
-.env
+.env*
 work/
 playwright-report/
 test-results/
