@@ -108,7 +108,7 @@ export class BackendStack extends cdk.Stack {
     const staff = create("Staff", "service/api.ts", "handler", {
       API_SCOPE: "staff",
       GOOGLE_CLIENT_SECRET_PARAMETER:
-        "/puncher/prod/google-client-secret",
+        "/puncher/google-client-secret",
     });
     const kiosk = create("Kiosk", "service/api.ts", "handler", {
       API_SCOPE: "kiosk",
@@ -194,7 +194,7 @@ export class BackendStack extends cdk.Stack {
       new iam.PolicyStatement({
         actions: ["ssm:GetParameter"],
         resources: [
-          `arn:${cdk.Aws.PARTITION}:ssm:${this.region}:${this.account}:parameter/puncher/prod/google-client-secret`,
+          `arn:${cdk.Aws.PARTITION}:ssm:${this.region}:${this.account}:parameter/puncher/google-client-secret`,
         ],
       }),
     );
@@ -205,7 +205,7 @@ export class BackendStack extends cdk.Stack {
         conditions: {
           StringEquals: {
             "kms:ViaService": `ssm.${this.region}.amazonaws.com`,
-            "kms:EncryptionContext:PARAMETER_ARN": `arn:${cdk.Aws.PARTITION}:ssm:${this.region}:${this.account}:parameter/puncher/prod/google-client-secret`,
+            "kms:EncryptionContext:PARAMETER_ARN": `arn:${cdk.Aws.PARTITION}:ssm:${this.region}:${this.account}:parameter/puncher/google-client-secret`,
           },
         },
       }),
