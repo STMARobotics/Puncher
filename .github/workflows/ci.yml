@@ -65,7 +65,7 @@ jobs:
       - run: npm run cdk:synth
       - uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: arn:aws:iam::738044534240:role/puncher-deployment-identity
+          role-to-assume: arn:aws:iam::738044534240:role/puncher-github-deploy
           aws-region: us-east-2
       - run: mkdir -p work
       - run: npm run cdk:deploy -- --require-approval never --outputs-file work/deployment-outputs.json

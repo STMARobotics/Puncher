@@ -2,9 +2,51 @@ import { it, expect } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import * as cdk from "aws-cdk-lib";
 import { Template, Match } from "aws-cdk-lib/assertions";
+import { config } from "../lib/config";
+import { DeploymentIdentityStack } from "../lib/deployment-identity-stack";
 // Synthesis runs before this suite in CI. Pure domain tests can run without a CDK output directory.
 const projectRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
+
+it("configures the GitHub workflow to assume the synthesized deployment role", () => {
+  const app = new cdk.App();
+  const stack = new DeploymentIdentityStack(
+    app,
+    "puncher-deployment-identity-test",
+    { env: { account: config.account, region: "us-east-2" } },
+    config,
+  );
+  const template = Template.fromStack(stack);
+  template.hasResourceProperties("AWS::IAM::Role", {
+    RoleName: "puncher-github-deploy",
+    AssumeRolePolicyDocument: {
+      Statement: Match.arrayWith([
+        {
+          Action: "sts:AssumeRoleWithWebIdentity",
+          Condition: {
+            StringEquals: {
+              "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+              "token.actions.githubusercontent.com:sub": `repo:${config.repository}:environment:puncher`,
+            },
+          },
+          Effect: "Allow",
+          Principal: {
+            Federated: `arn:aws:iam::${config.account}:oidc-provider/token.actions.githubusercontent.com`,
+          },
+        },
+      ]),
+    },
+  });
+  const workflow = readFileSync(
+    resolve(projectRoot, ".github/workflows/ci.yml"),
+    "utf8",
+  );
+  expect(workflow).toContain(
+    `role-to-assume: arn:aws:iam::${config.account}:role/puncher-github-deploy`,
+  );
+});
+
 it.skipIf(
   !existsSync(
     resolve(projectRoot, "cdk/cdk.out/puncher-backend.template.json"),
