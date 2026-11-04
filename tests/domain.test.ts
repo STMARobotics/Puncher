@@ -170,9 +170,7 @@ describe("shop attendance", () => {
   });
   it("forbids device and student operational mutations and disabled devices", async () => {
     const { app, db } = await fixture();
-    await expect(app.saveMember(device, {}, "x")).rejects.toThrow(
-      "Administrator",
-    );
+    await expect(app.saveMember(device, {}, "x")).rejects.toThrow("Mentor");
     await expect(app.award(device, "x", "000123")).rejects.toThrow("Mentor");
     await atomic(db, async (tx) => {
       const d = await tx.get(key("DEVICE#test-device"));

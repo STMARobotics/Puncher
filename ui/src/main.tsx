@@ -7,6 +7,7 @@ import "@fontsource/figtree/700.css";
 import "@fontsource/figtree/800.css";
 import "./style.css";
 import { api, setToken, duration, time } from "./api";
+import { MentorConsole } from "./mentor-console";
 import { ScanBuffer } from "./scanner";
 import { ScanEffects } from "./scan-effects";
 import { PuncherMark } from "./puncher-mark";
@@ -17,19 +18,24 @@ type Config = {
   googleClientId: string;
   statsUrl: string;
   localFixtures: boolean;
+  rosterSyncAvailable: boolean;
 };
 type Person = { id: string; roles: string[] };
 function App() {
   const [config, setConfig] = useState<Config>(),
     [page, setPage] = useState(
-      location.pathname === "/kiosk" ? "kiosk" : "events",
+      location.pathname === "/kiosk" ? "kiosk" : "home",
     ),
     [person, setPerson] = useState<Person>(),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [launching, setLaunching] = useState(false),
+    [foreignPending, setForeignPending] = useState(
+      sessionStorage.getItem("puncher-pending-foreign") === "true",
+    );
   useEffect(() => {
     const expired = () => {
       setPerson(undefined);
-      setError("Your sign-in expired. Please sign in again.");
+      setError("Your mentor sign-in expired. Please sign in again.");
     };
     window.addEventListener("puncher-auth-expired", expired);
     return () => window.removeEventListener("puncher-auth-expired", expired);
@@ -57,30 +63,60 @@ function App() {
       active = false;
     };
   }, [config, page]);
-  const signIn = async (credential: string) => {
+  async function signIn(credential: string) {
     try {
       setToken(credential);
-      setPerson(await api("/me"));
+      const mentor = await api("/me");
+      if (!mentor.roles?.some((r: string) => ["mentor", "admin"].includes(r)))
+        throw Error("Puncher is for mentors only.");
+      setPerson(mentor);
+      setPage("home");
       setError("");
     } catch (e: any) {
-      setError(e.message);
       setToken("");
+      setPerson(undefined);
+      setError(
+        e.status === 403
+          ? "Mentor access is not approved. Ask a mentor administrator to finish setup."
+          : e.message,
+      );
     }
-  };
-  const signOut = async () => {
+  }
+  async function signOut() {
     try {
       await api("/auth/logout", {}, "POST");
       setPerson(undefined);
       setToken("");
+      setPage("home");
       setError("");
     } catch (e: any) {
       setError(e.message);
     }
-  };
+  }
   function navigate(next: string) {
+    if (page === "kiosk") {
+      window.location.replace("/");
+      return;
+    }
     setPage(next);
-    history.pushState(null, "", next === "kiosk" ? "/kiosk" : "/");
     setError("");
+    history.pushState(null, "", "/");
+  }
+  async function launch() {
+    setLaunching(true);
+    setError("");
+    try {
+      const session = await api("/mentor/kiosk/launch", {});
+      if (sessionStorage.getItem("puncher-pending") && !session.resumed)
+        sessionStorage.setItem("puncher-pending-foreign", "true");
+      sessionStorage.setItem("puncher-kiosk-session", session.sessionId);
+      setToken("");
+      setPerson(undefined);
+      window.location.replace("/kiosk");
+    } catch (e: any) {
+      setError(e.message);
+      setLaunching(false);
+    }
   }
   return (
     <>
@@ -90,7 +126,7 @@ function App() {
           href="/"
           onClick={(e) => {
             e.preventDefault();
-            navigate("events");
+            navigate("home");
           }}
         >
           <span className="brand-icon">
@@ -100,38 +136,28 @@ function App() {
         </a>
         <nav aria-label="Main navigation">
           {page === "kiosk" ? (
-            <>
-              <button onClick={() => navigate("events")}>Staff</button>
-            </>
+            <button onClick={() => window.location.replace("/")}>
+              Mentor log in
+            </button>
           ) : (
-            <>
-              <button
-                className={page === "kiosk" ? "selected" : ""}
-                onClick={() => navigate("kiosk")}
-              >
-                Shop kiosk
-              </button>
-              {person && (
-                <button
-                  className={page === "events" ? "selected" : ""}
-                  onClick={() => navigate("events")}
-                >
-                  Volunteer
+            person && (
+              <>
+                <button onClick={() => navigate("home")}>
+                  Mentor dashboard
                 </button>
-              )}
-              {person?.roles.includes("admin") && (
-                <button
-                  className={page === "admin" ? "selected" : ""}
-                  onClick={() => navigate("admin")}
-                >
-                  Operations
+                <button onClick={() => navigate("members")}>
+                  Manage members
                 </button>
-              )}
-              <a href={config?.statsUrl || "#"}>
-                View hours <span aria-hidden>↗</span>
-              </a>
-              {person && <button onClick={signOut}>Sign out</button>}
-            </>
+                <button onClick={() => navigate("events")}>
+                  Volunteer events
+                </button>
+                <button disabled={launching} onClick={launch}>
+                  {launching ? "Launching…" : "Launch kiosk"}
+                </button>
+                <a href={config?.statsUrl}>View hours ↗</a>
+                <button onClick={signOut}>Sign out</button>
+              </>
+            )
           )}
         </nav>
       </header>
@@ -148,8 +174,8 @@ function App() {
           <Kiosk />
         ) : !person ? (
           <section className="signin">
-            <h1>SIGN IN</h1>
-            <p>Use your stmarobotics.org account.</p>
+            <h1>MENTOR LOG IN</h1>
+            <p>Sign in with your stmarobotics.org Google account.</p>
             {config.googleClientId ? (
               <a className="google-login" href="/api/auth/login">
                 Continue with Google
@@ -159,43 +185,66 @@ function App() {
             )}
             {config.localFixtures && (
               <div className="fixture-buttons">
-                <button onClick={() => signIn("local-admin")}>
-                  Local administrator
-                </button>
-                <button
-                  className="secondary"
-                  onClick={() => signIn("local-mentor")}
-                >
+                <button onClick={() => signIn("local-mentor")}>
                   Local mentor
                 </button>
                 <button
                   className="secondary"
-                  onClick={() => signIn("local-student")}
+                  onClick={() => signIn("local-admin")}
                 >
-                  Local student
+                  Local mentor administrator
                 </button>
               </div>
             )}
-            <a
-              className="text-link"
-              href="/kiosk"
-              onClick={(e) => {
-                e.preventDefault();
-                navigate("kiosk");
-              }}
-            >
-              Shop kiosk
-            </a>
           </section>
-        ) : page === "admin" && person.roles.includes("admin") ? (
-          <Admin />
-        ) : person.roles.some((r) => ["mentor", "admin"].includes(r)) ? (
-          <Events />
+        ) : page === "members" ? (
+          <MentorConsole
+            administrator={person.roles.includes("admin")}
+            rosterAvailable={config.rosterSyncAvailable}
+          />
+        ) : page === "events" || page === "new-event" ? (
+          <Events key={page} startCreating={page === "new-event"} />
         ) : (
-          <section className="panel">
-            <h1>VIEW YOUR HOURS</h1>
-            <p>Student hours are available in Stats.</p>
-            <a href={config.statsUrl}>Open Stats ↗</a>
+          <section className="panel mentor-dashboard">
+            <h1>MENTOR DASHBOARD</h1>
+            <p>
+              Manage attendance members, organize volunteer events, or launch
+              the shop kiosk.
+            </p>
+            <div className="mentor-actions">
+              <button onClick={() => navigate("members")}>
+                Manage members
+              </button>
+              <button onClick={() => navigate("new-event")}>
+                Create a volunteer event
+              </button>
+              <button disabled={launching} onClick={launch}>
+                {launching ? "Launching…" : "Launch kiosk"}
+              </button>
+            </div>
+            {foreignPending && (
+              <div className="notice error">
+                <p>
+                  An unconfirmed scan from a different kiosk session needs
+                  review. Check the member's attendance before clearing it.
+                </p>
+                <button
+                  onClick={() => {
+                    if (
+                      confirm(
+                        "Have you reviewed the prior attendance result? This clears only the local retry, not any recorded hours.",
+                      )
+                    ) {
+                      sessionStorage.removeItem("puncher-pending");
+                      sessionStorage.removeItem("puncher-pending-foreign");
+                      setForeignPending(false);
+                    }
+                  }}
+                >
+                  Clear reviewed scan
+                </button>
+              </div>
+            )}
           </section>
         )}
       </main>
@@ -210,7 +259,6 @@ function App() {
 function Kiosk() {
   const [ready, setReady] = useState(false),
     [checking, setChecking] = useState(true),
-    [credential, setCredential] = useState(""),
     [result, setResult] = useState<any>(),
     [state, setState] = useState("ready"),
     [error, setError] = useState(""),
@@ -228,7 +276,23 @@ function Kiosk() {
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     api("/kiosk/status")
-      .then(() => setReady(true))
+      .then((session) => {
+        const previous = sessionStorage.getItem("puncher-kiosk-session");
+        if (
+          sessionStorage.getItem("puncher-pending") &&
+          (!previous || (session.sessionId && previous !== session.sessionId))
+        )
+          sessionStorage.setItem("puncher-pending-foreign", "true");
+        if (session.sessionId)
+          sessionStorage.setItem("puncher-kiosk-session", session.sessionId);
+        if (sessionStorage.getItem("puncher-pending-foreign") === "true") {
+          setError(
+            "An unconfirmed scan needs mentor review before this kiosk can continue.",
+          );
+          return;
+        }
+        setReady(true);
+      })
       .catch((e) => setError(e.message))
       .finally(() => setChecking(false));
     return () => {
@@ -319,7 +383,7 @@ function Kiosk() {
       );
       if (op) send(op);
     } catch {
-      setError("Unresolved operation data needs adult attention.");
+      setError("Unresolved operation data needs mentor attention.");
       setState("uncertain");
     }
   }, [ready]);
@@ -393,13 +457,15 @@ function Kiosk() {
       window.removeEventListener("blur", blur);
     };
   }, [ready]);
-  async function setup(e: React.FormEvent) {
-    e.preventDefault();
+  async function endKiosk() {
+    if (pending.current || busy.current) {
+      setError("Finish the pending scan before ending the kiosk.");
+      return;
+    }
     try {
-      await api("/kiosk/setup", { credential });
-      setCredential("");
-      setReady(true);
-      setError("");
+      await api("/kiosk/end", {});
+      sessionStorage.removeItem("puncher-kiosk-session");
+      window.location.replace("/");
     } catch (e: any) {
       setError(e.message);
     }
@@ -407,6 +473,11 @@ function Kiosk() {
   return (
     <div className="kiosk">
       <div className="kiosk-topline">
+        {ready && (
+          <button className="secondary" onClick={endKiosk}>
+            End kiosk
+          </button>
+        )}
         <div className="clock">
           {new Intl.DateTimeFormat("en-US", {
             timeZone: "America/Chicago",
@@ -424,29 +495,19 @@ function Kiosk() {
         </div>
       </div>
       {checking ? (
-        <p>Checking device authorization…</p>
+        <p>Checking kiosk session…</p>
       ) : !ready ? (
         <section className="panel setup">
-          <h2>DEVICE SETUP</h2>
-          <p>Enter the credential from your administrator.</p>
+          <h2>KIOSK LOCKED</h2>
+          <p>A mentor must log in and launch this kiosk.</p>
           {error && (
             <p className="error" role="alert">
               {error}
             </p>
           )}
-          <form onSubmit={setup}>
-            <label>
-              Device credential
-              <input
-                type="password"
-                autoComplete="off"
-                required
-                value={credential}
-                onChange={(e) => setCredential(e.target.value)}
-              />
-            </label>
-            <button>Authorize this kiosk</button>
-          </form>
+          <button onClick={() => window.location.replace("/")}>
+            Mentor log in
+          </button>
         </section>
       ) : (
         <>
@@ -756,13 +817,13 @@ function ShopTotals() {
     </section>
   );
 }
-function Events() {
+function Events({ startCreating = false }: { startCreating?: boolean }) {
   const [events, setEvents] = useState<any[]>([]),
     [selected, setSelected] = useState<any>(),
     [participants, setParticipants] = useState<any[]>([]),
     [error, setError] = useState(""),
     [message, setMessage] = useState(""),
-    [form, setForm] = useState(false),
+    [form, setForm] = useState(startCreating),
     [editing, setEditing] = useState<any>(),
     [camera, setCamera] = useState(false);
   const inflight = useRef(new Set<string>());
@@ -1008,388 +1069,6 @@ function Events() {
           )}
         </section>
       </div>
-    </>
-  );
-}
-function Admin() {
-  const [tab, setTab] = useState("members"),
-    [items, setItems] = useState<any[]>([]),
-    [error, setError] = useState(""),
-    [message, setMessage] = useState(""),
-    [editing, setEditing] = useState<any>(),
-    [cursor, setCursor] = useState<string>(),
-    [fresh, setFresh] = useState(0);
-  const load = (next?: string) =>
-    api(`/admin/${tab}${next ? `?cursor=${encodeURIComponent(next)}` : ""}`)
-      .then((r) => {
-        setItems((prev) =>
-          next ? [...prev, ...(r.items || [])] : Array.isArray(r) ? r : r.items,
-        );
-        setCursor(r.cursor);
-      })
-      .catch((e) => setError(e.message));
-  useEffect(() => {
-    setItems([]);
-    setEditing(undefined);
-    setError("");
-    load();
-  }, [tab, fresh]);
-  async function save(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const f = e.currentTarget;
-    const d: any = Object.fromEntries(new FormData(f));
-    if (tab === "members") {
-      d.active = d.active === "on";
-    }
-    if (tab === "identities") {
-      d.enabled = d.enabled === "on";
-      d.roles = d.roles
-        .split(",")
-        .map((x: string) => x.trim())
-        .filter(Boolean);
-    }
-    try {
-      const r = await api(
-        `/admin/${tab}${editing?.memberId && tab === "members" ? `/${editing.memberId}` : ""}`,
-        d,
-        editing && tab === "members" ? "PATCH" : "POST",
-      );
-      setMessage(
-        r.credential
-          ? `Copy this one-time device credential: ${r.credential}`
-          : "Saved.",
-      );
-      setEditing(undefined);
-      setFresh((x) => x + 1);
-      f.reset();
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }
-  async function review(item: any, status: string) {
-    const reason = prompt(
-      `Set this imported credit to ${status}? Enter a review reason.`,
-    );
-    if (!reason) return;
-    try {
-      await api("/admin/review", {
-        pk: item.recordPk,
-        sk: item.recordSk,
-        status,
-        reason,
-      });
-      setFresh((x) => x + 1);
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }
-  return (
-    <>
-      <div className="page-heading">
-        <div>
-          <h1>SHOP OPERATIONS</h1>
-        </div>
-        <button className="secondary" onClick={() => setFresh((x) => x + 1)}>
-          Refresh
-        </button>
-      </div>
-      <div className="tabs" role="navigation" aria-label="Operations sections">
-        {["members", "active", "identities", "devices", "review", "audit"].map(
-          (t) => (
-            <button
-              className={tab === t ? "selected" : ""}
-              key={t}
-              onClick={() => {
-                setTab(t);
-                setMessage("");
-              }}
-            >
-              {t === "active"
-                ? "In shop"
-                : t === "review"
-                  ? "Import review"
-                  : t}
-            </button>
-          ),
-        )}
-      </div>
-      {error && (
-        <p role="alert" className="notice error">
-          {error}
-        </p>
-      )}
-      {message && (
-        <p role="status" className="notice success sensitive">
-          {message}
-        </p>
-      )}
-      {["members", "identities", "devices"].includes(tab) && (
-        <section className="panel">
-          <h2>
-            {editing ? "EDIT" : "ADD"}{" "}
-            {tab === "identities"
-              ? "IDENTITY MAPPING"
-              : tab === "devices"
-                ? "KIOSK DEVICE"
-                : "MEMBER"}
-          </h2>
-          <form
-            key={`${tab}-${editing?.memberId || editing?.googleSub || fresh}`}
-            onSubmit={save}
-            className="form-grid"
-          >
-            {tab === "members" ? (
-              <>
-                <label>
-                  Display name
-                  <input
-                    required
-                    name="displayName"
-                    defaultValue={editing?.displayName}
-                    maxLength={100}
-                  />
-                </label>
-                <label>
-                  Member kind
-                  <select
-                    name="memberKind"
-                    defaultValue={editing?.memberKind || "student"}
-                  >
-                    <option>student</option>
-                    <option>mentor</option>
-                  </select>
-                </label>
-                <label>
-                  Six-digit card (optional)
-                  <input
-                    name="barcode"
-                    defaultValue={editing?.barcode}
-                    pattern="[0-9]{6}"
-                    maxLength={6}
-                    inputMode="numeric"
-                    autoComplete="off"
-                  />
-                </label>
-                <label className="checkbox">
-                  <input
-                    name="active"
-                    type="checkbox"
-                    defaultChecked={editing?.active ?? true}
-                  />{" "}
-                  Active member
-                </label>
-              </>
-            ) : tab === "identities" ? (
-              <>
-                <label>
-                  Verified Google subject
-                  <input
-                    name="googleSub"
-                    required
-                    defaultValue={editing?.googleSub}
-                  />
-                </label>
-                <label>
-                  Verified robotics email
-                  <input
-                    name="email"
-                    type="email"
-                    required
-                    defaultValue={editing?.email}
-                  />
-                </label>
-                <label>
-                  Internal member ID (optional)
-                  <input name="memberId" defaultValue={editing?.memberId} />
-                </label>
-                <label>
-                  Roles (comma separated)
-                  <input
-                    name="roles"
-                    required
-                    defaultValue={
-                      editing?.roles?.join(",") || "student,stats:student"
-                    }
-                  />
-                </label>
-                <label className="checkbox">
-                  <input
-                    name="enabled"
-                    type="checkbox"
-                    defaultChecked={editing?.enabled ?? true}
-                  />{" "}
-                  Enabled identity
-                </label>
-              </>
-            ) : (
-              <label>
-                Device name
-                <input
-                  name="label"
-                  required
-                  maxLength={80}
-                  placeholder="Shop front desk"
-                />
-              </label>
-            )}
-            <button>
-              {editing
-                ? "Save changes"
-                : tab === "devices"
-                  ? "Provision device"
-                  : "Save"}
-            </button>
-            {editing && (
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => setEditing(undefined)}
-              >
-                Cancel
-              </button>
-            )}
-          </form>
-        </section>
-      )}
-      <section className="panel">
-        <div className="section-label">
-          {tab === "active" ? "CURRENTLY IN SHOP" : tab.toUpperCase()}{" "}
-          <span>{items.length}</span>
-        </div>
-        {items.length === 0 && <p className="muted">No records to show.</p>}
-        <div className="table-wrap">
-          {tab === "members" ? (
-            <table>
-              <thead>
-                <tr>
-                  <th>Member</th>
-                  <th>Card</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((m) => (
-                  <tr key={m.memberId}>
-                    <td>
-                      {m.displayName}
-                      <small>{m.memberId}</small>
-                    </td>
-                    <td>{m.barcode || "Unassigned"}</td>
-                    <td>
-                      <span className={`pill ${m.active ? "" : "off"}`}>
-                        {m.active ? "Active" : "Inactive"}
-                      </span>
-                    </td>
-                    <td>
-                      <button className="quiet" onClick={() => setEditing(m)}>
-                        Edit mapping
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : tab === "active" ? (
-            items.map((m) => (
-              <div key={m.memberId} className="list-row">
-                <span>{m.displayName}</span>
-                <span>Since {time(m.startedAt)}</span>
-              </div>
-            ))
-          ) : tab === "identities" ? (
-            items.map((m) => (
-              <div className="list-row" key={m.googleSub}>
-                <span>
-                  {m.email}
-                  <small>
-                    {m.googleSub} · {m.roles.join(", ")} ·{" "}
-                    {m.enabled ? "Enabled" : "Disabled"}
-                  </small>
-                </span>
-                <button className="quiet" onClick={() => setEditing(m)}>
-                  Edit
-                </button>
-              </div>
-            ))
-          ) : tab === "devices" ? (
-            items.map((d) => (
-              <div className="list-row" key={d.deviceId}>
-                <span>
-                  {d.label}
-                  <small>
-                    {d.enabled ? "Enabled" : "Revoked"} · Expires{" "}
-                    {d.expiresAt.slice(0, 10)}
-                  </small>
-                </span>
-                {d.enabled && (
-                  <button
-                    className="quiet danger"
-                    onClick={async () => {
-                      if (!confirm(`Revoke ${d.label}?`)) return;
-                      try {
-                        await api(`/admin/devices/${d.deviceId}`, {}, "DELETE");
-                        setFresh((x) => x + 1);
-                      } catch (e: any) {
-                        setError(e.message);
-                      }
-                    }}
-                  >
-                    Revoke
-                  </button>
-                )}
-              </div>
-            ))
-          ) : tab === "review" ? (
-            items.map((r, i) => (
-              <article className="review-row" key={i}>
-                <strong>{r.displayName || r.importKey}</strong>
-                <p>
-                  {r.status} · {(r.reasons || []).join(", ")}
-                </p>
-                <p>
-                  {r.title || "Shop visit"} · {r.localDate || "Date missing"} ·{" "}
-                  {r.creditedSeconds == null
-                    ? "Hours missing"
-                    : duration(r.creditedSeconds)}
-                  {r.originalApproval !== undefined
-                    ? ` · Original approval: ${r.originalApproval || "blank"}`
-                    : ""}
-                </p>
-                <p>
-                  {r.sourceFile} · Record {r.recordNumber}
-                </p>
-                <button className="quiet" onClick={() => review(r, "approved")}>
-                  Approve reviewed entry
-                </button>
-                <button
-                  className="quiet danger"
-                  onClick={() => review(r, "voided")}
-                >
-                  Void
-                </button>
-              </article>
-            ))
-          ) : (
-            items.map((a, i) => (
-              <div className="list-row" key={i}>
-                <span>
-                  {a.action}
-                  <small>
-                    {a.actor} · {a.target}
-                  </small>
-                </span>
-                <span>{a.at || ""}</span>
-              </div>
-            ))
-          )}
-        </div>
-        {cursor && (
-          <button className="secondary" onClick={() => load(cursor)}>
-            Load more
-          </button>
-        )}
-      </section>
     </>
   );
 }

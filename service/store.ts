@@ -6,6 +6,8 @@ import {
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { type Key, type Row, Fault } from "./model";
+import { activityConfig } from "./activity-contract";
+import { appendActivityEvents } from "./activity-outbox";
 export type Change = {
   before: Row | undefined;
   after?: Row;
@@ -33,6 +35,7 @@ export class DynamoStore implements Store {
   constructor(
     readonly table: string,
     endpoint?: string,
+    readonly integration = activityConfig(),
   ) {
     this.client = DynamoDBDocumentClient.from(
       new DynamoDBClient({
@@ -90,6 +93,7 @@ export class DynamoStore implements Store {
     };
   }
   async commit(changes: Change[]) {
+    changes = appendActivityEvents(changes, this.integration);
     if (!changes.length) return;
     try {
       await this.client.send(
@@ -139,6 +143,7 @@ export class DynamoStore implements Store {
 }
 // Tests only; never selected by the application runtime.
 export class MemoryStore implements Store {
+  constructor(readonly integration?: { orgId: string }) {}
   readonly rows = new Map<string, Row>();
   id(k: Key) {
     return `${k.pk}\u0000${k.sk}`;
@@ -178,6 +183,7 @@ export class MemoryStore implements Store {
     };
   }
   async commit(cs: Change[]) {
+    cs = appendActivityEvents(cs, this.integration);
     for (const c of cs) {
       const r = this.rows.get(this.id(c.key));
       if (c.before ? r?.v !== c.before.v : !!r) throw new Conflict();

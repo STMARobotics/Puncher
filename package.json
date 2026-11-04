@@ -29,7 +29,9 @@
     "cdk:diff": "npm exec --workspace=cdk -- cdk diff",
     "cdk:deploy": "npm run deploy --workspace=cdk -- --all",
     "check": "npm run build && npm run cdk:synth && npm test",
-    "format": "prettier --write \"{service,ui/src,scripts,cdk,tests}/**/*.{ts,tsx,mts,css,json}\" \"*.{json,ts}\""
+    "format": "prettier --write \"{service,ui/src,scripts,cdk,tests}/**/*.{ts,tsx,mts,css,json}\" \"*.{json,ts}\"",
+    "check:activity-contract": "node scripts/check-activity-contract.cjs",
+    "cdk:synth:integration": "npm run synth:integration --workspace=cdk -- -c validation=true"
   },
   "dependencies": {
     "concurrently": "^10.0.6"

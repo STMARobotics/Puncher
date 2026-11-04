@@ -28,6 +28,10 @@ const cookie = (name: string, value: string, maxAge: number, local: boolean) =>
   `${name}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${local ? "" : "; Secure"}`;
 const clearCookie = (name: string, local: boolean) =>
   cookie(name, "", 0, local);
+export const clearedSessionCookies = (local: boolean) => [
+  clearCookie(sessionCookieName(local), local),
+  clearCookie(STATE_COOKIE(local), local),
+];
 const redirect = (location: string, cookies: string[] = []): HttpResult => ({
   statusCode: 303,
   headers: {
@@ -255,10 +259,7 @@ export async function endSession(
     headers: {
       "content-type": "application/json",
       "cache-control": "no-store",
-      "set-cookie": [
-        clearCookie(name, c.local),
-        clearCookie(STATE_COOKIE(c.local), c.local),
-      ],
+      "set-cookie": clearedSessionCookies(c.local),
     },
     body: JSON.stringify({ signedOut: true }),
   };

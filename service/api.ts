@@ -1,10 +1,28 @@
 import { Puncher } from "./domain";
 import { shopTotals } from "./shop-totals";
-import { human, device } from "./auth";
+import {
+  human,
+  device,
+  kioskCredential,
+  cookieValue,
+  sessionCookieName,
+} from "./auth";
+import {
+  startRosterSync,
+  rosterStatus,
+  pendingRoster,
+  linkRosterMember,
+} from "./roster";
+import { enqueueRosterSync } from "./roster-queue";
 import { store, runtime, publicConfig } from "./runtime";
 import { all, atomic, type Store } from "./store";
-import { Fault, assert, admin, mentor, owns, key } from "./model";
-import { beginOAuth, endSession, finishOAuth } from "./session";
+import { Fault, assert, admin, mentor, owns, key, hash } from "./model";
+import {
+  beginOAuth,
+  endSession,
+  finishOAuth,
+  clearedSessionCookies,
+} from "./session";
 export type Request = {
   method: string;
   path: string;
@@ -26,7 +44,11 @@ const response = (
   } as Record<string, string | string[]>,
   body: JSON.stringify(body),
 });
-export async function dispatch(req: Request, db: Store = store()) {
+export async function dispatch(
+  req: Request,
+  db: Store = store(),
+  dependencies: { enqueueRoster?: (id: string) => Promise<void> } = {},
+) {
   try {
     const c = runtime();
     const cooldown = Number(process.env.SCAN_COOLDOWN_SECONDS || 5);
@@ -46,10 +68,15 @@ export async function dispatch(req: Request, db: Store = store()) {
     if (process.env.API_SCOPE === "staff")
       assert(
         !path.startsWith("/api/kiosk/"),
-        "Staff credentials do not authorize device routes.",
+        "Mentor credentials do not authorize kiosk routes.",
         403,
       );
     const b = req.body || {};
+    const cookieName = c.local
+      ? "puncher-local-device"
+      : "__Host-puncher-device";
+    const kioskCookie = (value: string, maxAge: number) =>
+      `${cookieName}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${c.local ? "" : "; Secure"}`;
     if (method === "GET" && path === "/config.json")
       return response(200, publicConfig());
     if (method === "GET" && path === "/api/health") {
@@ -64,8 +91,6 @@ export async function dispatch(req: Request, db: Store = store()) {
     if (method === "GET" && path === "/api/auth/login") return beginOAuth(db);
     if (method === "GET" && path === "/api/auth/callback")
       return finishOAuth(req.query || {}, headers, db);
-    if (method === "POST" && path === "/api/auth/logout")
-      return endSession(headers, db);
     if (method !== "GET") {
       assert(
         headers.origin === c.origin,
@@ -78,21 +103,39 @@ export async function dispatch(req: Request, db: Store = store()) {
         415,
       );
     }
+    if (method === "POST" && path === "/api/auth/logout")
+      return endSession(headers, db);
     if (path === "/api/kiosk/setup" && method === "POST") {
-      await device({ "x-device-token": b.credential }, db);
-      const name = c.local ? "puncher-local-device" : "__Host-puncher-device";
+      return response(410, {
+        message:
+          "Log in as a mentor and use Launch kiosk. Manual device setup has been retired.",
+      });
+    }
+    if (path === "/api/kiosk/end" && method === "POST") {
+      try {
+        const p = await device(headers, db),
+          token = kioskCredential(headers)!;
+        await atomic(db, async (tx) => {
+          const session = await tx.get(key("DEVICE#" + p.id));
+          if (session?.secretHash === hash(token.split(".")[1])) {
+            await tx.put({ ...session, enabled: false });
+            await app.audit(tx, p, "kiosk.ended", p.id);
+          }
+        });
+      } catch (error) {
+        if (!(error instanceof Fault && [401, 403].includes(error.status)))
+          throw error;
+      }
       return response(
         200,
-        { ready: true },
-        {
-          "set-cookie": `${name}=${b.credential}; Path=/; HttpOnly; SameSite=Strict; Max-Age=15552000${c.local ? "" : "; Secure"}`,
-        },
+        { ended: true },
+        { "set-cookie": kioskCookie("", 0) },
       );
     }
     if (path.startsWith("/api/kiosk/")) {
       const p = await device(headers, db);
       if (method === "GET" && path === "/api/kiosk/status")
-        return response(200, { ready: true });
+        return response(200, { ready: true, sessionId: p.id });
       if (method === "GET" && path === "/api/kiosk/totals")
         return response(200, await shopTotals(db, p));
       if (method === "GET" && path === "/api/kiosk/occupants")
@@ -123,6 +166,126 @@ export async function dispatch(req: Request, db: Store = store()) {
     }
     const p = await human(headers, db);
     if (path === "/api/me" && method === "GET") return response(200, p);
+    mentor(p);
+    if (path === "/api/mentor/kiosk/launch" && method === "POST") {
+      const session = await app.launchKiosk(
+        p,
+        kioskCredential(headers),
+        "Shop kiosk",
+        cookieValue(headers, sessionCookieName(c.local)),
+      );
+      return response(
+        200,
+        {
+          ready: true,
+          sessionId: session.sessionId,
+          resumed: session.resumed,
+          expiresAt: session.expiresAt,
+        },
+        // Keep the renewal credential for 30 days; server-side authorization
+        // still expires after 12h and renewal always requires mentor sign-in.
+        {
+          "set-cookie": [
+            kioskCookie(session.credential, 30 * 86400),
+            ...clearedSessionCookies(c.local),
+          ],
+        },
+      );
+    }
+    if (path === "/api/mentor/kiosks" && method === "GET")
+      return response(
+        200,
+        (await all(db, "DEVICES", { index: "GSI1" }))
+          .filter(
+            (d) =>
+              d.sessionType === "mentor-launch" &&
+              (p.roles.includes("admin") || d.launchedBy === p.id),
+          )
+          .map(({ deviceId, label, enabled, expiresAt, launchedAt }) => ({
+            sessionId: deviceId,
+            label,
+            enabled,
+            expiresAt,
+            launchedAt,
+          })),
+      );
+    const sessionToEnd = path.match(/^\/api\/mentor\/kiosks\/([^/]+)$/);
+    if (sessionToEnd && method === "DELETE")
+      return response(200, await app.revokeDevice(p, sessionToEnd[1]));
+    if (path === "/api/mentor/roster/sync" && method === "POST") {
+      assert(
+        publicConfig().rosterSyncAvailable,
+        "Google roster sync needs one-time Google Workspace administrator setup.",
+        503,
+      );
+      return response(
+        202,
+        await startRosterSync(
+          db,
+          p,
+          dependencies.enqueueRoster ?? enqueueRosterSync,
+        ),
+      );
+    }
+    if (path === "/api/mentor/roster/status" && method === "GET")
+      return response(200, await rosterStatus(db));
+    if (path === "/api/mentor/roster/pending" && method === "GET")
+      return response(200, await pendingRoster(db));
+    if (path === "/api/mentor/roster/link" && method === "POST")
+      return response(
+        200,
+        await linkRosterMember(
+          db,
+          p,
+          b.directoryId,
+          b.memberId,
+          b.createNew === true,
+        ),
+      );
+    if (path === "/api/mentor/members" && method === "GET")
+      return response(
+        200,
+        (await all(db, "MEMBERS", { index: "GSI1" })).map(
+          ({
+            memberId,
+            displayName,
+            email,
+            active,
+            memberKind,
+            barcode,
+            directoryUserId,
+            directorySuspended,
+          }) => ({
+            memberId,
+            displayName,
+            email,
+            active,
+            memberKind,
+            barcode,
+            directoryManaged: !!directoryUserId,
+            directorySuspended,
+          }),
+        ),
+      );
+    if (path === "/api/mentor/members" && method === "POST") {
+      assert(
+        b.memberId === undefined ||
+          (typeof b.memberId === "string" &&
+            /^[0-9a-f-]{36}$/.test(b.memberId)),
+        "Invalid member request ID.",
+      );
+      return response(201, await app.saveMember(p, b, b.memberId));
+    }
+    const mentorMember = path.match(
+      /^\/api\/mentor\/members\/([^/]+)(?:\/(replace-card))?$/,
+    );
+    if (mentorMember && method === "PATCH" && !mentorMember[2])
+      return response(200, await app.saveMember(p, b, mentorMember[1]));
+    if (mentorMember?.[2] && method === "POST")
+      return response(
+        200,
+        await app.replaceCard(p, mentorMember[1], b.operationId),
+      );
     if (path === "/api/events" && method === "GET") {
       mentor(p);
       const es = await all(db, "EVENTS", { index: "GSI1" });
@@ -186,6 +349,32 @@ export async function dispatch(req: Request, db: Store = store()) {
       }
     }
     admin(p);
+    if (path === "/api/admin/mentor-requests" && method === "GET")
+      return response(
+        200,
+        (await all(db, "MENTOR_REQUESTS", { index: "GSI1" })).map(
+          ({ googleSub, displayName, email, requestedAt }) => ({
+            googleSub,
+            displayName,
+            email,
+            requestedAt,
+          }),
+        ),
+      );
+    const mentorRequest = path.match(
+      /^\/api\/admin\/mentor-requests\/([^/]+)\/approve$/,
+    );
+    if (mentorRequest && method === "POST") {
+      return response(
+        200,
+        await app.approveMentor(
+          p,
+          mentorRequest[1],
+          b.administrator === true,
+          b.statsReports === true,
+        ),
+      );
+    }
     if (path === "/api/admin/members" && method === "GET")
       return response(
         200,
@@ -222,7 +411,9 @@ export async function dispatch(req: Request, db: Store = store()) {
     if (path === "/api/admin/active" && method === "GET")
       return response(200, await app.roster(p));
     if (path === "/api/admin/devices" && method === "POST")
-      return response(201, await app.createDevice(p, b.label));
+      return response(410, {
+        message: "Use Launch kiosk from the mentor dashboard.",
+      });
     if (path === "/api/admin/devices" && method === "GET")
       return response(
         200,

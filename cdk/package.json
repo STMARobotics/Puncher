@@ -8,7 +8,8 @@
     "cdk": "cdk",
     "synth": "cdk synth",
     "deploy": "cdk deploy",
-    "diff": "cdk diff"
+    "diff": "cdk diff",
+    "synth:integration": "cdk synth --app \"node --import tsx bin/integration.ts\" --output ../work/integration-synth"
   },
   "dependencies": {
     "aws-cdk-lib": "^2.275.0",

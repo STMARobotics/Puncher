@@ -1,5 +1,36 @@
 # VERIFICATION RECORD
 
+## CI fixture environment correction · November 4, 2026
+
+The hosted check exposed a job-wide `LOCAL_ROSTER_FIXTURES=true` setting conflicting with authentication/session tests that deliberately disable local auth. The runtime correctly rejected this unsafe combination. Reproduced the same eight failures locally with the inherited CI flags; the prior local validation did not inherit the roster flag. The workflow now enables the synthetic directory only for the browser-test step, and the three authentication-related test suites explicitly disable roster fixtures in their own environment setup. Production runtime guards are unchanged and their existing test now also verifies that roster fixtures require local auth fixtures.
+
+The original inherited-flag reproducer now passes all 22 affected tests. The complete `npm run check` passes all 74 tests, builds and synthesis using the corrected CI environment. Application code and dependencies are unchanged; the previously recorded database/browser validation remains applicable. Hosted CI must rerun on the published fix before claiming a green GitHub check.
+
+## Reconciliation with renamed OAuth secret · November 4, 2026
+
+Merged main `69c34df711ee1cda50d0783a4a04619fd050e827`, retaining its renamed `/puncher/google-client-secret` parameter in the backend environment, SSM read grant, KMS encryption-context restriction and deployment instructions. This resolves the backend-stack merge conflict caused by the concurrent rename. CDK type checking, default synthesis and all infrastructure tests passed; the synthesized template also confirms all three references use the new name and the old name is absent. Application, dependency and contract code is unchanged from the preceding validation. This was a local branch reconciliation; no main push or deployment was performed.
+
+## Reconciliation with seven-day backend sessions · November 4, 2026
+
+Merged main `e264e7e72cffb0f25c2ebc354c41d0f53a1bce6f` into the harmonization branch, preserving its server-side authorization-code login, seven-day sessions, new OAuth client configuration, Parameter Store secret access, refresh restoration and stricter frontend CSP. Mentor-only entry, manual roster sync and the transactional EventBridge outbox remain intact. Kiosk launch now atomically revokes the current browser's human session before entering kiosk mode; its response clears the human/OAuth cookies as well as assigning the kiosk cookie. Logout is checked for exact Origin/JSON before mutation, and both authorizers accept HTTP API v2's cookies array.
+
+Clean locked npm install succeeded with only the incoming SSM SDK dependency added to the prior dependency set. Builds and default/integration synthesis passed. Validation covers 74 unit/infrastructure tests, ten DynamoDB Local tests and eighteen Chromium scenarios. New cases exercise session restoration, cookie-only mentor launch, failed-launch rollback, immediate human-session invalidation, expired/student-session denial and logout Origin protection. One full infrastructure packaging test exceeded its former 30-second deadline under concurrent local validation; its timeout is now 60 seconds without changing its assertions. Shared activity contract hashes and Pipe round trips remain unchanged. No live Google/AWS deployment was performed.
+
+## Mentor roster and kiosk workflow · November 4, 2026
+
+The current workflow is documented in [mentor roster](mentor-roster.md). This update was verified on Node 24.22.2 using a clean locked source snapshot, official DynamoDB Local 1.25.1 and pinned headless Chromium:
+
+- `npm run check`: all workspace builds, default application synthesis and 70 unit/infrastructure tests. New cases cover complete Directory pagination, source failures, stable barcode allocation, suspension/removal, manual inactive overrides, explicit legacy linking, duplicate worker claims, mentor request approval, role isolation and kiosk secret rotation/revocation. Opt-in CDK assertions verify worker-only secret access, no identity writes, FIFO delivery and the existing cleanup schedule only.
+- Nine real DynamoDB Local integration tests, including concurrent code collisions, roster linking without history changes and idempotent card replacement. Disposable test tables only.
+- Sixteen Chromium browser scenarios across desktop and 390px viewports. New coverage includes mentor-only home, direct event creation, kiosk launch/end without mentor API authority, manual roster sync, legacy linking, external barcode CSV and blocking pending scans from an unrelated session. Existing attendance, camera-denial, manual-input and animation tests still pass. Desktop/member and mobile roster screenshots were visually reviewed.
+- Shared activity contract hashes, event identities and Pipe round trips pass unchanged; the separate integration bus/archive synthesizes. Existing native member IDs and the Stats reader schema are preserved. Roster enrollment emits no credit/reward events.
+
+Windows sandbox adaptations match the earlier harmonization validation: materialize locked npm workspaces as local copies instead of blocked symlinks; run Playwright against separately managed app servers because managed teardown hangs. Linux CI retains the normal lifecycle. Tests use an explicit synthetic local directory, not Google credentials or production data.
+
+Not exercised: live Google Workspace delegation/secret setup, deployed AWS IAM/queue behavior, real ID generation/printing, physical scanner/camera acceptance or production rollout. The Sync roster button remains unavailable in production until its documented opt-in configuration is deployed. No AWS resources were changed by this update.
+
+## Earlier implementation verification
+
 Implementation verification performed November 2, 2026 on Windows with Node 24.13.1 and official DynamoDB Local 1.25.1 running on JDK 17.
 
 - Production build: TypeScript strict checking, Vite frontend compilation, esbuild service packaging.

@@ -31,11 +31,16 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npm run check:activity-contract
       - run: npm run check
+      - name: Synthesize the separate organization integration stack
+        run: npm run cdk:synth:integration
       - run: npm run test:db
       - run: npm run db:init && npm run seed
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
+        env:
+          LOCAL_ROSTER_FIXTURES: "true"
       - uses: actions/upload-artifact@v7
         if: failure()
         with:

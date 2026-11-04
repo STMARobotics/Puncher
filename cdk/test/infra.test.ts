@@ -89,6 +89,10 @@ it.skipIf(
     for (const log of resources(backend, "AWS::Logs::LogGroup"))
       expect(log.Properties.LogGroupName).toMatch(/^\/puncher\/[^/]+$/);
     const table = resources(backend, "AWS::DynamoDB::Table")[0];
+    expect(table.Properties.StreamSpecification).toBeUndefined();
+    expect(resources(backend, "AWS::Pipes::Pipe")).toHaveLength(0);
+    for (const fn of resources(backend, "AWS::Lambda::Function"))
+      expect(fn.Properties.Environment.Variables.INTEGRATION_ENABLED).toBeUndefined();
     expect(table.DeletionPolicy).toBe("Retain");
     expect(table.Properties.DeletionProtectionEnabled).toBe(true);
     expect(

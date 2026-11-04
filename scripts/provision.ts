@@ -111,6 +111,8 @@ else if (command === "bootstrap-admin") {
         label: "Synthetic shop kiosk",
         enabled: true,
         secretHash: hash("synthetic-local-device"),
+        sessionType: "mentor-launch",
+        launchedBy: "local-mentor",
         expiresAt: "2099-01-01T00:00:00.000Z",
         gsi1pk: "DEVICES",
         gsi1sk: "33333333-3333-4333-8333-333333333333",
@@ -118,7 +120,7 @@ else if (command === "bootstrap-admin") {
     );
   });
   console.log(
-    "Synthetic members: 000123, 000456. Fixture sign-in is enabled only locally. Device credential: 33333333-3333-4333-8333-333333333333.synthetic-local-device",
+    "Synthetic members: 000123, 000456. Choose Local mentor, then Launch kiosk. Fixture sign-in is enabled only locally.",
   );
 } else if (command === "map-cards") {
   const mappings = JSON.parse(readFileSync(args[0], "utf8"));
