@@ -1,5 +1,9 @@
 # VERIFICATION RECORD
 
+## Reconciliation with renamed OAuth secret · November 4, 2026
+
+Merged main `69c34df711ee1cda50d0783a4a04619fd050e827`, retaining its renamed `/puncher/google-client-secret` parameter in the backend environment, SSM read grant, KMS encryption-context restriction and deployment instructions. This resolves the backend-stack merge conflict caused by the concurrent rename. CDK type checking, default synthesis and all infrastructure tests passed; the synthesized template also confirms all three references use the new name and the old name is absent. Application, dependency and contract code is unchanged from the preceding validation. This was a local branch reconciliation; no main push or deployment was performed.
+
 ## Reconciliation with seven-day backend sessions · November 4, 2026
 
 Merged main `e264e7e72cffb0f25c2ebc354c41d0f53a1bce6f` into the harmonization branch, preserving its server-side authorization-code login, seven-day sessions, new OAuth client configuration, Parameter Store secret access, refresh restoration and stricter frontend CSP. Mentor-only entry, manual roster sync and the transactional EventBridge outbox remain intact. Kiosk launch now atomically revokes the current browser's human session before entering kiosk mode; its response clears the human/OAuth cookies as well as assigning the kiosk cookie. Logout is checked for exact Origin/JSON before mutation, and both authorizers accept HTTP API v2's cookies array.
