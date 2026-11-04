@@ -21,7 +21,9 @@
     "cdk:synth": "cdk synth --app \"npx tsx infra/app.ts\"",
     "cdk:deploy": "cdk deploy --app \"npx tsx infra/app.ts\" --all",
     "check": "npm run build && npm run cdk:synth -- -c validation=true && npm test",
-    "format": "prettier --write \"{service,ui/src,scripts,infra,tests}/**/*.{ts,tsx,css}\" \"*.{json,ts}\""
+    "format": "prettier --write \"{service,ui/src,scripts,infra,tests}/**/*.{ts,tsx,css}\" \"*.{json,ts}\"",
+    "check:activity-contract": "node scripts/check-activity-contract.cjs",
+    "cdk:synth:integration": "cdk synth --app \"node --import tsx infra/integration-app.ts\" -c validation=true --output work/integration-synth"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1161.0",

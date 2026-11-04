@@ -19,7 +19,7 @@ const client = new DynamoDBClient({
     credentials: { accessKeyId: "local", secretAccessKey: "local" },
   }),
   tables: string[] = [];
-async function setup() {
+async function setup(integration?: { orgId: string }) {
   const table = `puncher-test-${uid()}`;
   tables.push(table);
   await client.send(
@@ -45,12 +45,40 @@ async function setup() {
       ],
     }),
   );
-  return fixture(new DynamoStore(table, endpoint));
+  return fixture(new DynamoStore(table, endpoint, integration));
 }
 after(async () => {
   for (const TableName of tables)
     await client.send(new DeleteTableCommand({ TableName: TableName }));
   client.destroy();
+});
+test('activity outbox commits once with checkout and voided volunteer credit on real DynamoDB', async () => {
+  const { app, db, advance } = await setup({ orgId: 'example-team' });
+  const checkout = uid();
+  await app.scan(device, '000123', uid());
+  advance(3600);
+  await Promise.all([app.scan(device, '000123', checkout), app.scan(device, '000123', checkout)]);
+  const event = await app.saveEvent(mentor, {
+    title: 'Synthetic outreach',
+    eventDate: '2026-05-31',
+    hours: '0.5',
+  });
+  await app.award(mentor, event.eventId, '000123');
+  await app.removeAward(mentor, event.eventId, 'member-a', 'Synthetic correction');
+  const date = new Date().toISOString().slice(0, 10);
+  const rows = await all(db, 'OUTBOX#example-team#puncher#' + date);
+  assert.equal(rows.length, 3);
+  assert.equal(rows.filter((r) => r.shopSeconds === 3600).length, 1);
+  assert.deepEqual(
+    rows
+      .filter((r) => r.volunteerSeconds !== 0 || (r.entityVersion === 2 && r.shopSeconds === 0))
+      .map((r) => [r.entityVersion, r.volunteerSeconds])
+      .sort(),
+    [
+      [1, 1800],
+      [2, 0],
+    ],
+  );
 });
 test("real DynamoDB transactions: concurrent scans, durable retry and per-member cooldown", async () => {
   const { app, db, advance } = await setup();

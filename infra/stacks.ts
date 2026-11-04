@@ -24,6 +24,7 @@ import {
 import { Construct } from "constructs";
 import { resolve } from "node:path";
 import type { Config } from "./config";
+import { activityStream, configureActivityPublisher, activityOutboxPrefixes } from "./activity-publisher";
 export class CertificateStack extends cdk.Stack {
   readonly certificate: acm.Certificate;
   constructor(scope: Construct, id: string, props: cdk.StackProps, c: Config) {
@@ -46,6 +47,7 @@ export class BackendStack extends cdk.Stack {
     const prefix = `puncher-${c.environment}`;
     this.table = new ddb.Table(this, "Records", {
       tableName: `${prefix}-records`,
+      stream: activityStream(this),
       partitionKey: { name: "pk", type: ddb.AttributeType.STRING },
       sortKey: { name: "sk", type: ddb.AttributeType.STRING },
       billingMode: ddb.BillingMode.PAY_PER_REQUEST,
@@ -133,6 +135,7 @@ export class BackendStack extends cdk.Stack {
     });
     const cleanup = create("Cleanup", "service/cleanup.ts", "handler");
     const totals = create("ShopTotals", "service/shop-totals.ts", "handler");
+    configureActivityPublisher(this, this.table, [staff, kiosk, cleanup], "puncher");
     totals.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ["dynamodb:GetItem"],
@@ -219,12 +222,13 @@ export class BackendStack extends cdk.Stack {
         "ACTIVE",
         "AUDIT",
         "APP#PUNCHER",
+        ...activityOutboxPrefixes(this, "puncher"),
       ],
     );
     permission(
       cleanup,
       ["GetItem", "Query", "PutItem", "DeleteItem", "ConditionCheckItem"],
-      ["ACTIVE", "MEMBER#*", "AUDIT"],
+      ["ACTIVE", "MEMBER#*", "AUDIT", ...activityOutboxPrefixes(this, "puncher")],
     );
     const humanAuth = new auth.HttpLambdaAuthorizer("HumanAuth", humans, {
       identitySource: ["$request.header.Authorization"],
