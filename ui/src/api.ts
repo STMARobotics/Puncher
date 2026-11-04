@@ -6,6 +6,7 @@ export async function api(
   path: string,
   body?: unknown,
   method = body === undefined ? "GET" : "POST",
+  options: { silentUnauthorized?: boolean } = {},
 ) {
   const response = await fetch(`/api${path}`, {
     method,
@@ -17,8 +18,18 @@ export async function api(
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(12000),
   });
-  const result = await response.json();
-  if (response.status === 401 && token && !path.startsWith("/kiosk/")) {
+  let result: any = {};
+  try {
+    result = await response.json();
+  } catch {
+    result = {};
+  }
+  if (
+    response.status === 401 &&
+    !options.silentUnauthorized &&
+    !path.startsWith("/kiosk/") &&
+    path !== "/auth/logout"
+  ) {
     token = "";
     window.dispatchEvent(new Event("puncher-auth-expired"));
   }

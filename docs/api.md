@@ -1,10 +1,13 @@
 # API AND OPERATIONS
 
-All browser writes send JSON and the exact configured Origin. Human routes use `Authorization: Bearer <Google ID token>` with Puncher's audience; device routes use the provisioned HttpOnly cookie or X-Device-Token. No ordinary human password exists. Lambda authorizers have zero cache TTL; handlers recheck enabled identities, roles, membership and event ownership. Student role alone grants no operational API access.
+All browser writes send JSON and the exact configured Origin. Human routes use a seven-day, server-side DynamoDB session referenced by a Secure, HttpOnly, SameSite=Lax cookie; the raw session value is never stored in DynamoDB. Google authorization-code flow uses state, nonce and PKCE. The callback validates Google's signed ID token before creating the session. Device routes use the provisioned HttpOnly cookie or X-Device-Token. No ordinary human password exists. Lambda authorizers have zero cache TTL; handlers recheck enabled identities, roles, membership and event ownership. Student role alone grants no operational API access.
 
 | Method | Path | Authorization / behavior |
 | --- | --- | --- |
 | GET | /api/health | Public schema availability, no student data |
+| GET | /api/auth/login | Starts Google OIDC authorization-code flow |
+| GET | /api/auth/callback | Validates one-time OAuth state/code, creates session and redirects |
+| POST | /api/auth/logout | Origin-checked session revocation and cookie clearing |
 | GET | /api/me | Verified mapped human; role/setup DTO |
 | POST | /api/kiosk/setup | Valid provisioned device credential + Origin; sets device cookie |
 | GET | /api/kiosk/status | Device availability |

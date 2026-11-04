@@ -42,6 +42,21 @@ function App() {
         setError("Unable to load configuration. Check the connection."),
       );
   }, []);
+  useEffect(() => {
+    if (!config || page === "kiosk") return;
+    let active = true;
+    api("/me", undefined, "GET", { silentUnauthorized: true })
+      .then((current) => {
+        if (active) setPerson(current);
+      })
+      .catch((e: any) => {
+        if (active && e.status !== 401)
+          setError("Unable to restore your sign-in. Check the connection.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [config, page]);
   const signIn = async (credential: string) => {
     try {
       setToken(credential);
@@ -52,33 +67,16 @@ function App() {
       setToken("");
     }
   };
-  useEffect(() => {
-    if (!config?.googleClientId || person) return;
-    let disposed = false;
-    const script = document.createElement("script");
-    script.src = "https://accounts.google.com/gsi/client";
-    script.async = true;
-    script.onload = () => {
-      if (disposed) return;
-      const g = (window as any).google;
-      g.accounts.id.initialize({
-        client_id: config.googleClientId,
-        hd: "stmarobotics.org",
-        callback: (r: any) => signIn(r.credential),
-      });
-      const el = document.getElementById("google-signin");
-      if (el)
-        g.accounts.id.renderButton(el, {
-          theme: "filled_black",
-          size: "large",
-        });
-    };
-    document.head.append(script);
-    return () => {
-      disposed = true;
-      script.remove();
-    };
-  }, [config, person, page]);
+  const signOut = async () => {
+    try {
+      await api("/auth/logout", {}, "POST");
+      setPerson(undefined);
+      setToken("");
+      setError("");
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
   function navigate(next: string) {
     setPage(next);
     history.pushState(null, "", next === "kiosk" ? "/kiosk" : "/");
@@ -132,16 +130,7 @@ function App() {
               <a href={config?.statsUrl || "#"}>
                 View hours <span aria-hidden>↗</span>
               </a>
-              {person && (
-                <button
-                  onClick={() => {
-                    setPerson(undefined);
-                    setToken("");
-                  }}
-                >
-                  Sign out
-                </button>
-              )}
+              {person && <button onClick={signOut}>Sign out</button>}
             </>
           )}
         </nav>
@@ -161,8 +150,11 @@ function App() {
           <section className="signin">
             <h1>SIGN IN</h1>
             <p>Use your stmarobotics.org account.</p>
-            <div id="google-signin" />
-            {!config.googleClientId && (
+            {config.googleClientId ? (
+              <a className="google-login" href="/api/auth/login">
+                Continue with Google
+              </a>
+            ) : (
               <p className="muted">Google sign-in is not configured.</p>
             )}
             {config.localFixtures && (

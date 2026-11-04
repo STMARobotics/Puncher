@@ -10,21 +10,39 @@ export type Verify = (
 const google = new OAuth2Client();
 export const verifyGoogle: Verify = async (token, audience) =>
   (await google.verifyIdToken({ idToken: token, audience })).getPayload();
+
+export function cookieValue(
+  headers: Record<string, string | undefined>,
+  name: string,
+) {
+  return headers.cookie
+    ?.split(";")
+    .map((x) => x.trim())
+    .find((x) => x.startsWith(`${name}=`))
+    ?.slice(name.length + 1);
+}
+
+export function sessionCookieName(local: boolean) {
+  return local ? "puncher-local-session" : "__Host-puncher-session";
+}
+
 export async function human(
   headers: Record<string, string | undefined>,
   db: Store,
   verify: Verify = verifyGoogle,
 ): Promise<Principal> {
   const c = runtime();
-  const bearer = headers.authorization?.match(/^Bearer (\S+)$/)?.[1];
-  assert(bearer, "Sign in with your robotics Google account.", 401);
+  const bearer = headers.authorization?.match(
+    new RegExp("^Bearer\\s+(.+)$", "i"),
+  )?.[1];
   let sub: string;
   if (
     c.fixtures &&
+    bearer &&
     ["local-admin", "local-mentor", "local-student"].includes(bearer)
   )
     sub = bearer;
-  else {
+  else if (bearer) {
     assert(c.googleClientId, "Google client is not configured.", 503);
     let t: TokenPayload | undefined;
     try {
@@ -46,6 +64,16 @@ export async function human(
       401,
     );
     sub = t.sub;
+  } else {
+    const cookie = cookieValue(headers, sessionCookieName(c.local));
+    assert(cookie, "Sign in with your robotics Google account.", 401);
+    const session = await db.get(key(`SESSION#${hash(cookie)}`));
+    assert(
+      session?.sub && session.expiresAt > new Date().toISOString(),
+      "Your sign-in expired. Please sign in again.",
+      401,
+    );
+    sub = session.sub;
   }
   const identity = await db.get(key(`IDENTITY#${sub}`));
   assert(

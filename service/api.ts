@@ -4,6 +4,7 @@ import { human, device } from "./auth";
 import { store, runtime, publicConfig } from "./runtime";
 import { all, atomic, type Store } from "./store";
 import { Fault, assert, admin, mentor, owns, key } from "./model";
+import { beginOAuth, endSession, finishOAuth } from "./session";
 export type Request = {
   method: string;
   path: string;
@@ -14,7 +15,7 @@ export type Request = {
 const response = (
   statusCode: number,
   body: any,
-  headers: Record<string, string> = {},
+  headers: Record<string, string | string[]> = {},
 ) => ({
   statusCode,
   headers: {
@@ -22,7 +23,7 @@ const response = (
     "cache-control": "no-store",
     "x-content-type-options": "nosniff",
     ...headers,
-  } as Record<string, string>,
+  } as Record<string, string | string[]>,
   body: JSON.stringify(body),
 });
 export async function dispatch(req: Request, db: Store = store()) {
@@ -60,6 +61,11 @@ export async function dispatch(req: Request, db: Store = store()) {
       );
       return response(200, { status: "ok", schemaVersion: 1 });
     }
+    if (method === "GET" && path === "/api/auth/login") return beginOAuth(db);
+    if (method === "GET" && path === "/api/auth/callback")
+      return finishOAuth(req.query || {}, headers, db);
+    if (method === "POST" && path === "/api/auth/logout")
+      return endSession(headers, db);
     if (method !== "GET") {
       assert(
         headers.origin === c.origin,
@@ -267,7 +273,9 @@ export async function dispatch(req: Request, db: Store = store()) {
       }),
     );
     return response(500, {
-      message: "Unable to confirm a saved result. Retry the same operation.",
+      message: req.path.startsWith("/api/auth/")
+        ? "Sign-in is temporarily unavailable. Please try again."
+        : "Unable to confirm a saved result. Retry the same operation.",
     });
   }
 }
@@ -291,7 +299,10 @@ export async function handler(event: any) {
   const cookie = result.headers["set-cookie"];
   if (cookie) {
     delete result.headers["set-cookie"];
-    return { ...result, cookies: [cookie] };
+    return {
+      ...result,
+      cookies: Array.isArray(cookie) ? cookie : [cookie],
+    };
   }
   return result;
 }
