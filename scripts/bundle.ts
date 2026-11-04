@@ -1,12 +1,15 @@
 import { build } from "esbuild";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 await build({
   entryPoints: [
-    "service/api.ts",
-    "service/auth.ts",
-    "service/cleanup.ts",
-    "service/shop-totals.ts",
+    resolve(projectRoot, "service/api.ts"),
+    resolve(projectRoot, "service/auth.ts"),
+    resolve(projectRoot, "service/cleanup.ts"),
+    resolve(projectRoot, "service/shop-totals.ts"),
   ],
-  outdir: "dist/service",
+  outdir: resolve(projectRoot, "dist/service"),
   platform: "node",
   target: "node24",
   format: "esm",

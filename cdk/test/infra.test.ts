@@ -1,15 +1,24 @@
 import { it, expect } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Template, Match } from "aws-cdk-lib/assertions";
 // Synthesis runs before this suite in CI. Pure domain tests can run without a CDK output directory.
-it.skipIf(!existsSync("cdk.out/puncher-dev-backend.template.json"))(
+const projectRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
+it.skipIf(
+  !existsSync(
+    resolve(projectRoot, "cdk/cdk.out/puncher-backend.template.json"),
+  ),
+)(
   "synthesized topology protects records, auth, scheduler and resource tags",
   () => {
     const load = (name: string) =>
       JSON.parse(
         readFileSync(
-          resolve(`cdk.out/puncher-dev-${name}.template.json`),
+          resolve(
+            projectRoot,
+            `cdk/cdk.out/puncher-${name}.template.json`,
+          ),
           "utf8",
         ),
       );
@@ -27,6 +36,12 @@ it.skipIf(!existsSync("cdk.out/puncher-dev-backend.template.json"))(
     );
     const resources = (t: any, type: string) =>
       Object.values(t.Resources).filter((r: any) => r.Type === type) as any[];
+    for (const fn of resources(backend, "AWS::Lambda::Function")) {
+      expect(fn.Properties.FunctionName).toMatch(/^puncher-/);
+      expect(fn.Properties.Environment.Variables.APP_ENV).toBe("prod");
+    }
+    for (const log of resources(backend, "AWS::Logs::LogGroup"))
+      expect(log.Properties.LogGroupName).toMatch(/^\/puncher\/[^/]+$/);
     const table = resources(backend, "AWS::DynamoDB::Table")[0];
     expect(table.DeletionPolicy).toBe("Retain");
     expect(table.Properties.DeletionProtectionEnabled).toBe(true);
@@ -67,7 +82,9 @@ it.skipIf(!existsSync("cdk.out/puncher-dev-backend.template.json"))(
         const tags = r.Properties?.Tags;
         if (Array.isArray(tags)) {
           expect(tags).toContainEqual({ Key: "AppName", Value: "Puncher" });
-          expect(tags).toContainEqual({ Key: "Environment", Value: "dev" });
+          expect(tags.some((tag: any) => tag.Key === "Environment")).toBe(
+            false,
+          );
         }
       }
     expect(JSON.stringify(backend)).not.toContain("LOCAL_AUTH_FIXTURES");

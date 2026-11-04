@@ -11,4 +11,4 @@ Start with [local development](docs/local-development.md). Node 24+, npm and Dyn
 - [Stats reader v1 contract](docs/stats-integration.md)
 - [Machine-readable schemas](contracts/stats-reader.v1.json) and [synthetic fixtures](contracts/fixtures/reader-v1.json)
 
-Checks: `npm run build`, `npm run cdk:synth -- -c validation=true`, `npm test`, `npm run test:db`, `npm run test:browser`. See docs for required local setup and deployment configuration. Physical NSA5/student cards, actual iPhone/Android cameras, production Google/AWS settings and midnight operation require manual acceptance before launch. See docs/verification.md for recorded test results and limitations.
+Checks: `npm run build`, `npm run cdk:synth`, `npm test`, `npm run test:db`, `npm run test:browser`. See docs for local setup and the single production configuration. Physical NSA5/student cards, actual iPhone/Android cameras, production Google/AWS settings and midnight operation require manual acceptance before launch. See docs/verification.md for recorded test results and limitations.

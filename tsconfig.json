@@ -11,5 +11,6 @@
     "resolveJsonModule": true,
     "types": ["node", "vite/client"]
   },
-  "include": ["service", "ui", "scripts", "infra", "tests", "*.ts"]
+  "include": ["service", "ui", "scripts", "tests", "*.ts"],
+  "exclude": ["cdk"]
 }

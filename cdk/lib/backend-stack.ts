@@ -13,39 +13,19 @@ import {
   aws_cloudwatch as cw,
   aws_sns as sns,
   aws_cloudwatch_actions as actions,
-  aws_certificatemanager as acm,
-  aws_route53 as dns,
-  aws_route53_targets as targets,
-  aws_s3 as s3,
-  aws_s3_deployment as deploy,
-  aws_cloudfront as cf,
-  aws_cloudfront_origins as origins,
 } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import { resolve } from "node:path";
 import type { Config } from "./config";
-export class CertificateStack extends cdk.Stack {
-  readonly certificate: acm.Certificate;
-  constructor(scope: Construct, id: string, props: cdk.StackProps, c: Config) {
-    super(scope, id, props);
-    const zone = dns.HostedZone.fromHostedZoneAttributes(this, "Zone", {
-      hostedZoneId: c.zoneId,
-      zoneName: c.zoneName,
-    });
-    this.certificate = new acm.Certificate(this, "Certificate", {
-      domainName: c.domain,
-      validation: acm.CertificateValidation.fromDns(zone),
-    });
-  }
-}
+const projectRoot = resolve(__dirname, "../..");
 export class BackendStack extends cdk.Stack {
   readonly table: ddb.Table;
   readonly api: http.HttpApi;
   constructor(scope: Construct, id: string, props: cdk.StackProps, c: Config) {
     super(scope, id, props);
-    const prefix = `puncher-${c.environment}`;
+    const prefix = "puncher";
     this.table = new ddb.Table(this, "Records", {
-      tableName: `${prefix}-records`,
+      tableName: c.tableName,
       partitionKey: { name: "pk", type: ddb.AttributeType.STRING },
       sortKey: { name: "sk", type: ddb.AttributeType.STRING },
       billingMode: ddb.BillingMode.PAY_PER_REQUEST,
@@ -78,13 +58,13 @@ export class BackendStack extends cdk.Stack {
       extra: Record<string, string> = {},
     ) => {
       const logGroup = new logs.LogGroup(this, `${name}Logs`, {
-        logGroupName: `/puncher/${c.environment}/${name}`,
+        logGroupName: `/puncher/${name}`,
         retention: logs.RetentionDays.ONE_MONTH,
         removalPolicy: cdk.RemovalPolicy.RETAIN,
       });
       const f = new nodejs.NodejsFunction(this, name, {
         functionName: `${prefix}-${name.toLowerCase()}`,
-        entry: resolve(entry),
+        entry: resolve(projectRoot, entry),
         handler,
         runtime: lambda.Runtime.NODEJS_24_X,
         architecture: lambda.Architecture.ARM_64,
@@ -99,7 +79,7 @@ export class BackendStack extends cdk.Stack {
           externalModules: [],
         },
         environment: {
-          APP_ENV: c.environment,
+          APP_ENV: "prod",
           TABLE_NAME: this.table.tableName,
           GOOGLE_CLIENT_ID: c.googleClientId,
           ALLOWED_ORIGIN: `https://${c.domain}`,
@@ -351,164 +331,5 @@ export class BackendStack extends cdk.Stack {
     new cdk.CfnOutput(this, "TableRegion", { value: this.region });
     new cdk.CfnOutput(this, "AlarmTopicArn", { value: topic.topicArn });
     new cdk.CfnOutput(this, "ApiEndpoint", { value: this.api.apiEndpoint });
-  }
-}
-export class FrontendStack extends cdk.Stack {
-  constructor(
-    scope: Construct,
-    id: string,
-    props: cdk.StackProps,
-    c: Config,
-    backend: BackendStack,
-    certificate: acm.ICertificate,
-  ) {
-    super(scope, id, props);
-    const prefix = `puncher-${c.environment}`;
-    const bucket = new s3.Bucket(this, "Site", {
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      enforceSSL: true,
-      encryption: s3.BucketEncryption.S3_MANAGED,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-    });
-    const rewrite = new cf.Function(this, "FrontendRouting", {
-      runtime: cf.FunctionRuntime.JS_2_0,
-      code: cf.FunctionCode.fromInline(
-        "function handler(e){var r=e.request;if(r.uri==='/api'||r.uri.indexOf('/api/')===0)return r;var last=r.uri.split('/').pop();if(r.uri==='/'||last.indexOf('.')<0)r.uri='/index.html';return r;}",
-      ),
-    });
-    const security = new cf.ResponseHeadersPolicy(this, "Security", {
-      securityHeadersBehavior: {
-        contentTypeOptions: { override: true },
-        strictTransportSecurity: {
-          accessControlMaxAge: cdk.Duration.days(365),
-          includeSubdomains: true,
-          override: true,
-        },
-        referrerPolicy: {
-          referrerPolicy: cf.HeadersReferrerPolicy.NO_REFERRER,
-          override: true,
-        },
-        frameOptions: {
-          frameOption: cf.HeadersFrameOption.DENY,
-          override: true,
-        },
-        contentSecurityPolicy: {
-          contentSecurityPolicy:
-            "default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client; style-src 'self' 'unsafe-inline' https://accounts.google.com; connect-src 'self' https://accounts.google.com; frame-src https://accounts.google.com; img-src 'self' data: https://*.googleusercontent.com; font-src 'self'; media-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
-          override: true,
-        },
-      },
-      customHeadersBehavior: {
-        customHeaders: [
-          {
-            header: "Permissions-Policy",
-            value: "camera=(self), microphone=()",
-            override: true,
-          },
-        ],
-      },
-    });
-    const dist = new cf.Distribution(this, "Distribution", {
-      comment: prefix,
-      domainNames: [c.domain],
-      certificate,
-      defaultRootObject: "index.html",
-      defaultBehavior: {
-        origin: origins.S3BucketOrigin.withOriginAccessControl(bucket),
-        viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        responseHeadersPolicy: security,
-        functionAssociations: [
-          { function: rewrite, eventType: cf.FunctionEventType.VIEWER_REQUEST },
-        ],
-      },
-    });
-    const apiBehavior: cf.BehaviorOptions = {
-      origin: new origins.HttpOrigin(
-        cdk.Fn.select(2, cdk.Fn.split("/", backend.api.apiEndpoint)),
-      ),
-      viewerProtocolPolicy: cf.ViewerProtocolPolicy.HTTPS_ONLY,
-      allowedMethods: cf.AllowedMethods.ALLOW_ALL,
-      cachePolicy: cf.CachePolicy.CACHING_DISABLED,
-      originRequestPolicy: cf.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
-      responseHeadersPolicy: security,
-    };
-    dist.addBehavior("/api/*", apiBehavior.origin, apiBehavior);
-    dist.addBehavior("/api", apiBehavior.origin, apiBehavior);
-    new deploy.BucketDeployment(this, "Assets", {
-      sources: [
-        deploy.Source.asset(resolve("dist/ui")),
-        deploy.Source.data(
-          "config.json",
-          JSON.stringify({
-            googleClientId: c.googleClientId,
-            allowedDomain: "stmarobotics.org",
-            timezone: "America/Chicago",
-            statsUrl: c.statsUrl,
-            localFixtures: false,
-          }),
-        ),
-      ],
-      destinationBucket: bucket,
-      distribution: dist,
-      distributionPaths: ["/*"],
-      cacheControl: [deploy.CacheControl.noCache()],
-    });
-    const zone = dns.HostedZone.fromHostedZoneAttributes(this, "Zone", {
-      hostedZoneId: c.zoneId,
-      zoneName: c.zoneName,
-    });
-    new dns.ARecord(this, "Alias", {
-      zone,
-      recordName: c.domain,
-      target: dns.RecordTarget.fromAlias(new targets.CloudFrontTarget(dist)),
-    });
-    new dns.AaaaRecord(this, "AliasIPv6", {
-      zone,
-      recordName: c.domain,
-      target: dns.RecordTarget.fromAlias(new targets.CloudFrontTarget(dist)),
-    });
-    new cdk.CfnOutput(this, "URL", { value: `https://${c.domain}` });
-  }
-}
-export class DeploymentIdentityStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props: cdk.StackProps, c: Config) {
-    super(scope, id, props);
-    const provider = iam.OpenIdConnectProvider.fromOpenIdConnectProviderArn(
-      this,
-      "GithubProvider",
-      `arn:aws:iam::${c.account}:oidc-provider/token.actions.githubusercontent.com`,
-    );
-    const role = new iam.Role(this, "DeploymentRole", {
-      roleName: `puncher-${c.environment}-github-deploy`,
-      assumedBy: new iam.FederatedPrincipal(
-        provider.openIdConnectProviderArn,
-        {
-          StringEquals: {
-            "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-            "token.actions.githubusercontent.com:sub": `repo:${c.repository}:environment:puncher-${c.environment}`,
-          },
-        },
-        "sts:AssumeRoleWithWebIdentity",
-      ),
-    });
-    role.addToPolicy(
-      new iam.PolicyStatement({
-        actions: ["sts:AssumeRole"],
-        resources: [
-          `arn:aws:iam::${c.account}:role/cdk-puncher-*-${c.account}-us-east-1`,
-          `arn:aws:iam::${c.account}:role/cdk-puncher-*-${c.account}-us-east-2`,
-        ],
-      }),
-    );
-    role.addToPolicy(
-      new iam.PolicyStatement({
-        actions: ["cloudformation:DescribeStacks"],
-        resources: [
-          `arn:aws:cloudformation:*:${c.account}:stack/puncher-*/*`,
-          `arn:aws:cloudformation:*:${c.account}:stack/CDKToolkit-Puncher/*`,
-        ],
-      }),
-    );
-    new cdk.CfnOutput(this, "RoleArn", { value: role.roleArn });
   }
 }

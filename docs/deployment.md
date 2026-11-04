@@ -1,25 +1,27 @@
 # AWS DEPLOYMENT
 
-The proposed domain is puncher.7028robotics.com. No AWS resources were deployed during implementation. Use a dedicated development account/environment before production. All application resources run in us-east-2; the CloudFront DNS certificate runs in us-east-1. FMEA was read only and its production resources, zone ID, OAuth client ID and IAM roles were not copied.
+The production domain is puncher.7028robotics.com. No AWS resources were deployed during implementation. Puncher uses the AWS account, hosted-zone ID, and public Google OAuth client ID from fmea-app, as explicitly approved; it does not reuse FMEA resources or deployment roles. Application resources run in us-east-2 and the CloudFront certificate in us-east-1.
 
-Set these explicit environment values (or corresponding CDK contexts in infra/config.ts): PUNCHER_ACCOUNT, PUNCHER_ENV=dev|prod, PUNCHER_DOMAIN, PUNCHER_ZONE_NAME, PUNCHER_ZONE_ID, GOOGLE_CLIENT_ID, STATS_URL, PUNCHER_GITHUB_REPOSITORY=owner/repo. The OAuth web client must allow the chosen HTTPS domain and local http://localhost:5173 if used. The confirmed Workspace domain is stmarobotics.org. Public config.json contains only this client ID, domain, timezone and display link; never put secrets there. Google verifies its JWT signature using Google's maintained library, then server checks issuer, audience, exp, subject, email verification and hosted domain. Every request rechecks persisted app permissions.
+The single configuration is in `cdk/lib/config.ts`; CDK synthesizes one fixed set of Puncher stacks. The DynamoDB table name remains `puncher-prod-records` for the existing read-only Stats integration contract. The OAuth web client must authorize the Puncher and Stats HTTPS domains and local `http://localhost:5173` if used. The confirmed Workspace domain is `stmarobotics.org`. Public `config.json` contains only the client ID, domain, timezone, and display link; no OAuth client secret is needed. Google verifies its JWT signature using Google's maintained library, then the server checks issuer, audience, expiration, subject, email verification, and hosted domain. Every request rechecks persisted app permissions.
 
-Use AWS SSO for initial infrastructure setup. Bootstrap both regions with a Puncher-specific qualifier and toolkit stack, and an execution policy restricted to Puncher resources plus the selected hosted zone. Review that policy for your account before creating it:
+Use AWS SSO for initial infrastructure setup. Bootstrap both regions using the standard CDK qualifier and toolkit stack, with an execution policy restricted to Puncher resources plus the selected hosted zone. Review that policy for your account before creating it:
 
 ```powershell
-npx cdk bootstrap aws://ACCOUNT/us-east-1 aws://ACCOUNT/us-east-2 --qualifier puncher --toolkit-stack-name CDKToolkit-Puncher --cloudformation-execution-policies arn:aws:iam::ACCOUNT:policy/PuncherDeploymentExecution
+npm exec --workspace=cdk -- cdk bootstrap aws://ACCOUNT/us-east-1 aws://ACCOUNT/us-east-2 --cloudformation-execution-policies arn:aws:iam::ACCOUNT:policy/PuncherDeploymentExecution
 npm ci
 npm run build
 npm run cdk:synth
-npx cdk diff --app "npx tsx infra/app.ts"
+npm run cdk:diff
 npm run cdk:deploy
 ```
 
-`-c validation=true` uses deliberate placeholder account/zone/client values for CI synthesis only. It is not a deployment configuration. Frontend build must exist before synthesis. Certificate, backend and frontend are separate stacks with explicit cross-region certificate references, retained records/PITR/deletion protection, private S3/OAC, and same-origin /api and /api/* behaviors. API responses are uncached; Authorization, device header, Origin and cookies forward to the API. SPA rewrites apply only to static frontend behavior. Default Lambda URLs are absent; direct API Gateway calls still require authorizers and backend checks. The public setup endpoint validates a high-entropy device credential and Origin and sets a secure HttpOnly SameSite=Strict cookie. The direct scan endpoint accepts X-Device-Token as an alternative and enforces exact Origin for browser writes.
+Synthesis uses the same fixed production config as deployment and makes no AWS calls; it is safe in CI. Frontend build must exist before synthesis. Certificate, backend and frontend are separate stacks with explicit cross-region certificate references, retained records/PITR/deletion protection, private S3/OAC, and same-origin /api and /api/* behaviors. API responses are uncached; Authorization, device header, Origin and cookies forward to the API. SPA rewrites apply only to static frontend behavior. Default Lambda URLs are absent; direct API Gateway calls still require authorizers and backend checks. The public setup endpoint validates a high-entropy device credential and Origin and sets a secure HttpOnly SameSite=Strict cookie. The direct scan endpoint accepts X-Device-Token as an alternative and enforces exact Origin for browser writes.
 
-Create/import the account's GitHub OIDC provider operationally if absent. Synthesize/deploy only the deployment identity stack with `-c identity=true`; its trust is scoped to the configured repository and GitHub environment `puncher-dev` or `puncher-prod`, audience sts.amazonaws.com. It can assume only Puncher-qualified bootstrap roles. Configure environment protections, deployment role ARN and explicit config values as GitHub environment variables. The workflow uses OIDC and never AWS access keys. Do not grant FMEA's role to this repository. Use branch/main approval protection on the production GitHub environment. The GitHub role's downstream execution policy is an account setup responsibility, not AdministratorAccess by default.
+Create the account's GitHub OIDC provider operationally if absent. With administrator credentials, deploy only the identity stack: `npm exec --workspace=cdk -- cdk deploy --app "npx tsx bin/cdk.ts" puncher-deployment-identity -c identity=true`. Its trust is scoped to `STMARobotics/Puncher` and the single GitHub environment `puncher`, audience `sts.amazonaws.com`; it can assume only standard CDK bootstrap roles. Configure that protected GitHub environment to allow `main`. The workflow uses OIDC short-lived AWS credentials; no GitHub secrets, AWS access keys, or FMEA deployment role are used. The GitHub role's downstream execution policy is an account setup responsibility, not AdministratorAccess by default.
 
-After deployment use an authorized operator shell with APP_ENV=dev|prod, TABLE_NAME from output, no local endpoint/fixture flags, AWS_REGION=us-east-2, GOOGLE_CLIENT_ID and ALLOWED_ORIGIN set:
+CI validates pushes and pull requests without AWS credentials and never deploys them. A push to `main` automatically deploys after all validation—including database and browser tests—succeeds.
+
+After deployment use an authorized operator shell with APP_ENV=prod, TABLE_NAME=puncher-prod-records, no local endpoint/fixture flags, AWS_REGION=us-east-2, GOOGLE_CLIENT_ID and ALLOWED_ORIGIN set:
 
 ```powershell
 npm run provision -- schema

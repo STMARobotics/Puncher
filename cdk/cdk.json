@@ -1,0 +1,7 @@
+{
+  "app": "npx tsx bin/cdk.ts",
+  "context": {
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/core:defaultCrossStackReferences": "strong"
+  }
+}

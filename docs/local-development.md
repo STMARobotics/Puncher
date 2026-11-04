@@ -24,7 +24,7 @@ This implementation was exercised using the official DynamoDB Local 1.25.1 distr
 
 ```powershell
 npm run build
-npm run cdk:synth -- -c validation=true
+npm run cdk:synth
 npm test
 npm run test:db
 npx playwright install chromium
@@ -33,4 +33,4 @@ npm run test:browser
 
 CDK validation values synthesize only; never deploy validation output. Browser tests require the seeded local table and start/stop their own API/UI servers. `npm run test:db` creates randomly named local-only tables and removes only those tables. Domain clocks are injectable. Screenshots and traces are under ignored work/ and test-results/.
 
-For real local Google sign-in, set GOOGLE_CLIENT_ID for an OAuth web client with http://localhost:5173 as an authorized origin; set LOCAL_AUTH_FIXTURES=false. Provision its verified subject with the operational command. Production and local authentication call the same verification and mapping code. A cloud development table requires explicit APP_ENV=dev, TABLE_NAME=puncher-dev-*, no DYNAMODB_ENDPOINT, LOCAL_AUTH_FIXTURES=false and an AWS SSO session. No implicit production table selection exists.
+For real local Google sign-in, set GOOGLE_CLIENT_ID for an OAuth web client with http://localhost:5173 as an authorized origin; set LOCAL_AUTH_FIXTURES=false. Provision its verified subject with the operational command. Production and local authentication call the same verification and mapping code. The CDK configuration deploys only the production environment; local development and CI use DynamoDB Local and must not point at the production table.
