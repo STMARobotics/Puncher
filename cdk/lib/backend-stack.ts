@@ -117,6 +117,7 @@ export class BackendStack extends cdk.Stack {
     );
     const staff = create("Staff", "service/api.ts", "handler", {
       API_SCOPE: "staff",
+      GOOGLE_CLIENT_SECRET_PARAMETER: "/puncher/prod/google-client-secret",
     });
     const kiosk = create("Kiosk", "service/api.ts", "handler", {
       API_SCOPE: "kiosk",
@@ -220,11 +221,32 @@ export class BackendStack extends cdk.Stack {
     );
     permission(devices, ["GetItem"], ["DEVICE#*", "IDENTITY#*", "MEMBER#*"]);
     permission(kiosk, ["GetItem", "ConditionCheckItem"], ["IDENTITY#*"]);
+    permission(humans, ["GetItem"], ["SESSION#*"]);
     permission(
       staff,
       ["GetItem", "Query", "PutItem", "DeleteItem", "ConditionCheckItem"],
       undefined,
       true,
+    );
+    staff.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["ssm:GetParameter"],
+        resources: [
+          `arn:${cdk.Aws.PARTITION}:ssm:${this.region}:${this.account}:parameter/puncher/prod/google-client-secret`,
+        ],
+      }),
+    );
+    staff.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["kms:Decrypt"],
+        resources: ["*"],
+        conditions: {
+          StringEquals: {
+            "kms:ViaService": `ssm.${this.region}.amazonaws.com`,
+            "kms:EncryptionContext:PARAMETER_ARN": `arn:${cdk.Aws.PARTITION}:ssm:${this.region}:${this.account}:parameter/puncher/prod/google-client-secret`,
+          },
+        },
+      }),
     );
     permission(
       kiosk,
@@ -341,7 +363,7 @@ export class BackendStack extends cdk.Stack {
       }).addAlarmAction(new actions.SnsAction(topic));
     }
     const humanAuth = new auth.HttpLambdaAuthorizer("HumanAuth", humans, {
-      identitySource: ["$request.header.Authorization"],
+      identitySource: ["$request.header.Cookie"],
       responseTypes: [auth.HttpLambdaResponseType.SIMPLE],
       resultsCacheTtl: cdk.Duration.seconds(0),
     });
@@ -382,6 +404,16 @@ export class BackendStack extends cdk.Stack {
       methods: [http.HttpMethod.POST],
       integration: kioskIntegration,
     });
+    for (const [path, method] of [
+      ["/api/auth/login", http.HttpMethod.GET],
+      ["/api/auth/callback", http.HttpMethod.GET],
+      ["/api/auth/logout", http.HttpMethod.POST],
+    ] as const)
+      this.api.addRoutes({
+        path,
+        methods: [method],
+        integration: staffIntegration,
+      });
     this.api.addRoutes({
       path: "/api/health",
       methods: [http.HttpMethod.GET],

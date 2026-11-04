@@ -1,5 +1,11 @@
 # VERIFICATION RECORD
 
+## Reconciliation with seven-day backend sessions · November 4, 2026
+
+Merged main `e264e7e72cffb0f25c2ebc354c41d0f53a1bce6f` into the harmonization branch, preserving its server-side authorization-code login, seven-day sessions, new OAuth client configuration, Parameter Store secret access, refresh restoration and stricter frontend CSP. Mentor-only entry, manual roster sync and the transactional EventBridge outbox remain intact. Kiosk launch now atomically revokes the current browser's human session before entering kiosk mode; its response clears the human/OAuth cookies as well as assigning the kiosk cookie. Logout is checked for exact Origin/JSON before mutation, and both authorizers accept HTTP API v2's cookies array.
+
+Clean locked npm install succeeded with only the incoming SSM SDK dependency added to the prior dependency set. Builds and default/integration synthesis passed. Validation covers 74 unit/infrastructure tests, ten DynamoDB Local tests and eighteen Chromium scenarios. New cases exercise session restoration, cookie-only mentor launch, failed-launch rollback, immediate human-session invalidation, expired/student-session denial and logout Origin protection. One full infrastructure packaging test exceeded its former 30-second deadline under concurrent local validation; its timeout is now 60 seconds without changing its assertions. Shared activity contract hashes and Pipe round trips remain unchanged. No live Google/AWS deployment was performed.
+
 ## Mentor roster and kiosk workflow · November 4, 2026
 
 The current workflow is documented in [mentor roster](mentor-roster.md). This update was verified on Node 24.22.2 using a clean locked source snapshot, official DynamoDB Local 1.25.1 and pinned headless Chromium:

@@ -48,6 +48,21 @@ function App() {
         setError("Unable to load configuration. Check the connection."),
       );
   }, []);
+  useEffect(() => {
+    if (!config || page === "kiosk") return;
+    let active = true;
+    api("/me", undefined, "GET", { silentUnauthorized: true })
+      .then((current) => {
+        if (active) setPerson(current);
+      })
+      .catch((e: any) => {
+        if (active && e.status !== 401)
+          setError("Unable to restore your sign-in. Check the connection.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [config, page]);
   async function signIn(credential: string) {
     try {
       setToken(credential);
@@ -67,34 +82,17 @@ function App() {
       );
     }
   }
-  useEffect(() => {
-    if (!config?.googleClientId || person || page === "kiosk") return;
-    let disposed = false;
-    const script = document.createElement("script");
-    script.src = "https://accounts.google.com/gsi/client";
-    script.async = true;
-    script.onload = () => {
-      if (disposed) return;
-      const g = (window as any).google;
-      g.accounts.id.initialize({
-        client_id: config.googleClientId,
-        hd: "stmarobotics.org",
-        auto_select: false,
-        callback: (r: any) => signIn(r.credential),
-      });
-      const el = document.getElementById("google-signin");
-      if (el)
-        g.accounts.id.renderButton(el, {
-          theme: "filled_black",
-          size: "large",
-        });
-    };
-    document.head.append(script);
-    return () => {
-      disposed = true;
-      script.remove();
-    };
-  }, [config, person, page]);
+  async function signOut() {
+    try {
+      await api("/auth/logout", {}, "POST");
+      setPerson(undefined);
+      setToken("");
+      setPage("home");
+      setError("");
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
   function navigate(next: string) {
     if (page === "kiosk") {
       window.location.replace("/");
@@ -114,7 +112,6 @@ function App() {
       sessionStorage.setItem("puncher-kiosk-session", session.sessionId);
       setToken("");
       setPerson(undefined);
-      (window as any).google?.accounts?.id?.disableAutoSelect();
       window.location.replace("/kiosk");
     } catch (e: any) {
       setError(e.message);
@@ -158,16 +155,7 @@ function App() {
                   {launching ? "Launching…" : "Launch kiosk"}
                 </button>
                 <a href={config?.statsUrl}>View hours ↗</a>
-                <button
-                  onClick={() => {
-                    setToken("");
-                    setPerson(undefined);
-                    setPage("home");
-                    (window as any).google?.accounts?.id?.disableAutoSelect();
-                  }}
-                >
-                  Sign out
-                </button>
+                <button onClick={signOut}>Sign out</button>
               </>
             )
           )}
@@ -188,8 +176,11 @@ function App() {
           <section className="signin">
             <h1>MENTOR LOG IN</h1>
             <p>Sign in with your stmarobotics.org Google account.</p>
-            <div id="google-signin" />
-            {!config.googleClientId && (
+            {config.googleClientId ? (
+              <a className="google-login" href="/api/auth/login">
+                Continue with Google
+              </a>
+            ) : (
               <p className="muted">Google sign-in is not configured.</p>
             )}
             {config.localFixtures && (

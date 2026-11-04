@@ -46,6 +46,8 @@ export function runtime() {
     table: process.env.TABLE_NAME!,
     origin: process.env.ALLOWED_ORIGIN || "http://localhost:5173",
     googleClientId: process.env.GOOGLE_CLIENT_ID || "",
+    googleClientSecretParameter:
+      process.env.GOOGLE_CLIENT_SECRET_PARAMETER || "",
     statsUrl: process.env.STATS_URL || "https://stats.7028robotics.com",
   };
 }

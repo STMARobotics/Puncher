@@ -1,8 +1,19 @@
 # AWS DEPLOYMENT
 
-The production domain is puncher.7028robotics.com. No AWS resources were deployed during implementation. Puncher uses the AWS account, hosted-zone ID, and public Google OAuth client ID from fmea-app, as explicitly approved; it does not reuse FMEA resources or deployment roles. Application resources run in us-east-2 and the CloudFront certificate in us-east-1.
+The production domain is puncher.7028robotics.com. No AWS resources were deployed during implementation. Puncher does not reuse another app's OAuth client, AWS resource, or deployment role. Application resources run in us-east-2 and the CloudFront certificate in us-east-1.
 
-The single configuration is in `cdk/lib/config.ts`; CDK synthesizes one fixed set of Puncher stacks. The DynamoDB table name remains `puncher-prod-records` for the existing read-only Stats integration contract. The OAuth web client must authorize the Puncher and Stats HTTPS domains and local `http://localhost:5173` if used. The confirmed Workspace domain is `stmarobotics.org`. Public `config.json` contains only the client ID, domain, timezone, display link and capability flags; no OAuth client secret is needed. Google verifies its JWT signature using Google's maintained library, then the server checks issuer, audience, expiration, subject, email verification, and hosted domain. Every request rechecks persisted app permissions.
+The single configuration is in `cdk/lib/config.ts`; CDK synthesizes one fixed set of Puncher stacks. The DynamoDB table name remains `puncher-prod-records` for the existing read-only Stats integration contract. Puncher stores OAuth state and seven-day server sessions in this existing table; DynamoDB TTL cleans up expired rows. Session cookies are Secure, HttpOnly and SameSite=Lax. Sessions are independent of other apps and do not require a shared database.
+
+## Google OAuth setup
+
+Create a new OAuth app/client in the Google Cloud project for Puncher; use a separate OAuth client for the Angular app. In Google Auth Platform:
+
+1. Configure the app name, support email, and authorized domain `7028robotics.com`. Set the audience to **Internal** for the `stmarobotics.org` Workspace organization. This OAuth flow requests only the standard `openid` and `email` scopes.
+2. Create an OAuth client with application type **Web application**. Add this exact authorized redirect URI: `https://puncher.7028robotics.com/api/auth/callback`. For local real-Google testing, also add `http://localhost:5173/api/auth/callback`. No JavaScript origin is needed for this server-side redirect flow.
+3. Copy the new client ID into `googleClientId` in `cdk/lib/config.ts`. Keep the client secret private; it is not placed in the repository or public `config.json`.
+4. In AWS Systems Manager Parameter Store in **us-east-2**, create `/puncher/prod/google-client-secret` as a **Standard** tier **SecureString**, using the AWS-owned `alias/aws/ssm` key, and set its value to the OAuth client secret. Do this before deploying. Standard Parameter Store has no per-parameter monthly fee. The Staff Lambda has permission to read/decrypt only this parameter and caches the value for its execution environment.
+
+The callback uses state, nonce and PKCE, exchanges the authorization code in the backend, verifies Google's signed ID token, then creates a random opaque session. The session value itself is hashed before DynamoDB storage. Google sign-in credentials and the OAuth client secret are never sent to browser storage. Google may show consent on the first authorization; later sign-ins generally reuse the user's Google session and existing grant. Keep the consent screen internal so only Workspace accounts can authorize; the backend independently verifies issuer, audience, expiration, subject, verified email and hosted domain, then rechecks Puncher permissions on every request.
 
 Use AWS SSO for initial infrastructure setup. Bootstrap both regions using the standard CDK qualifier and toolkit stack, with an execution policy restricted to Puncher resources plus the selected hosted zone. Review that policy for your account before creating it:
 

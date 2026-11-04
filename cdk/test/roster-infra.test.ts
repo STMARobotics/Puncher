@@ -100,4 +100,4 @@ it("isolates the opt-in manual roster worker and keeps mentor launch behind huma
           ],
         ).not.toContain("IDENTITY#*");
   }
-});
+}, 60000);

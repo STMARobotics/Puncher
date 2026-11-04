@@ -76,6 +76,10 @@ it.skipIf(
       "AWS::ApiGatewayV2::Route",
       { RouteKey: "GET /api/kiosk/totals", AuthorizationType: "CUSTOM" },
     );
+    Template.fromJSON(backend).hasResourceProperties(
+      "AWS::ApiGatewayV2::Route",
+      { RouteKey: "GET /api/auth/callback", AuthorizationType: "NONE" },
+    );
     const resources = (t: any, type: string) =>
       Object.values(t.Resources).filter((r: any) => r.Type === type) as any[];
     for (const fn of resources(backend, "AWS::Lambda::Function")) {
@@ -104,6 +108,11 @@ it.skipIf(
     expect(schedule.Target.DeadLetterConfig).toBeTruthy();
     for (const a of resources(backend, "AWS::ApiGatewayV2::Authorizer"))
       expect(a.Properties.AuthorizerResultTtlInSeconds).toBe(0);
+    expect(
+      resources(backend, "AWS::ApiGatewayV2::Authorizer").some((a: any) =>
+        a.Properties.IdentitySource?.includes("$request.header.Cookie"),
+      ),
+    ).toBe(true);
     const distribution = resources(frontend, "AWS::CloudFront::Distribution")[0]
       .Properties.DistributionConfig;
     expect(

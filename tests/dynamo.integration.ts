@@ -7,7 +7,7 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { DynamoStore, all } from "../service/store";
 import { fixture, device, admin, mentor } from "./helpers";
-import { uid, eligible, key } from "../service/model";
+import { uid, eligible, key, hash } from "../service/model";
 import { row } from "../service/model";
 import { atomic } from "../service/store";
 import { shopTotals } from "../service/shop-totals";
@@ -58,6 +58,42 @@ after(async () => {
   for (const TableName of tables)
     await client.send(new DeleteTableCommand({ TableName: TableName }));
   client.destroy();
+});
+
+test("mentor session revocation commits with kiosk launch on real DynamoDB", async () => {
+  const { db, app } = await setup();
+  const token = "synthetic-browser-session",
+    k = key("SESSION#" + hash(token));
+  await atomic(db, (tx) =>
+    tx.put(
+      row(k.pk, k.sk, {
+        sub: mentor.id,
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      }),
+    ),
+  );
+  const launched = await app.launchKiosk(
+    mentor,
+    undefined,
+    "Shop kiosk",
+    token,
+  );
+  assert.equal(await db.get(k), undefined);
+  assert.equal(
+    (await db.get(key("DEVICE#" + launched.sessionId)))?.sessionType,
+    "mentor-launch",
+  );
+  // A failed launch cannot consume the browser session before a kiosk exists.
+  await atomic(db, (tx) =>
+    tx.put(
+      row(k.pk, k.sk, {
+        sub: mentor.id,
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      }),
+    ),
+  );
+  await assert.rejects(app.launchKiosk(mentor, undefined, "", token));
+  assert.ok(await db.get(k));
 });
 
 test("roster sync and card replacement preserve canonical attendance on real DynamoDB", async () => {

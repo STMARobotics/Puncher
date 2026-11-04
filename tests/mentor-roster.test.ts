@@ -386,9 +386,12 @@ it("launches an isolated kiosk via mentor login, renews the same retry identity,
     db,
   );
   expect(first.statusCode).toBe(200);
-  expect(first.headers["set-cookie"]).toContain("HttpOnly");
+  expect([first.headers["set-cookie"]].flat().join(";")).toContain("HttpOnly");
   expect(first.body).not.toContain("credential");
-  const cookie = first.headers["set-cookie"].split(";")[0],
+  const cookie = [first.headers["set-cookie"]]
+      .flat()
+      .find((value) => value.startsWith("puncher-local-device="))!
+      .split(";")[0],
     session = JSON.parse(first.body),
     op = uid();
   const scan = () =>
@@ -413,7 +416,10 @@ it("launches an isolated kiosk via mentor login, renews the same retry identity,
   );
   expect(JSON.parse(renewed.body).sessionId).toBe(session.sessionId);
   expect(JSON.parse(renewed.body).resumed).toBe(true);
-  const nextCookie = renewed.headers["set-cookie"].split(";")[0];
+  const nextCookie = [renewed.headers["set-cookie"]]
+    .flat()
+    .find((value) => value.startsWith("puncher-local-device="))!
+    .split(";")[0];
   await expect(authenticateKiosk({ cookie }, db)).rejects.toThrow();
   const retry = await dispatch(
     {
@@ -478,7 +484,10 @@ it("immediately rejects kiosk sessions whose launching mentor loses access", asy
     },
     db,
   );
-  const cookie = launch.headers["set-cookie"].split(";")[0];
+  const cookie = [launch.headers["set-cookie"]]
+    .flat()
+    .find((value) => value.startsWith("puncher-local-device="))!
+    .split(";")[0];
   await atomic(db, async (tx) => {
     const r = await tx.get(key("IDENTITY#local-mentor"));
     await tx.put({ ...r!, roles: [] });

@@ -1,6 +1,12 @@
 import { Puncher } from "./domain";
 import { shopTotals } from "./shop-totals";
-import { human, device, kioskCredential } from "./auth";
+import {
+  human,
+  device,
+  kioskCredential,
+  cookieValue,
+  sessionCookieName,
+} from "./auth";
 import {
   startRosterSync,
   rosterStatus,
@@ -11,6 +17,12 @@ import { enqueueRosterSync } from "./roster-queue";
 import { store, runtime, publicConfig } from "./runtime";
 import { all, atomic, type Store } from "./store";
 import { Fault, assert, admin, mentor, owns, key, hash } from "./model";
+import {
+  beginOAuth,
+  endSession,
+  finishOAuth,
+  clearedSessionCookies,
+} from "./session";
 export type Request = {
   method: string;
   path: string;
@@ -21,7 +33,7 @@ export type Request = {
 const response = (
   statusCode: number,
   body: any,
-  headers: Record<string, string> = {},
+  headers: Record<string, string | string[]> = {},
 ) => ({
   statusCode,
   headers: {
@@ -29,7 +41,7 @@ const response = (
     "cache-control": "no-store",
     "x-content-type-options": "nosniff",
     ...headers,
-  } as Record<string, string>,
+  } as Record<string, string | string[]>,
   body: JSON.stringify(body),
 });
 export async function dispatch(
@@ -76,6 +88,9 @@ export async function dispatch(
       );
       return response(200, { status: "ok", schemaVersion: 1 });
     }
+    if (method === "GET" && path === "/api/auth/login") return beginOAuth(db);
+    if (method === "GET" && path === "/api/auth/callback")
+      return finishOAuth(req.query || {}, headers, db);
     if (method !== "GET") {
       assert(
         headers.origin === c.origin,
@@ -88,6 +103,8 @@ export async function dispatch(
         415,
       );
     }
+    if (method === "POST" && path === "/api/auth/logout")
+      return endSession(headers, db);
     if (path === "/api/kiosk/setup" && method === "POST") {
       return response(410, {
         message:
@@ -151,7 +168,12 @@ export async function dispatch(
     if (path === "/api/me" && method === "GET") return response(200, p);
     mentor(p);
     if (path === "/api/mentor/kiosk/launch" && method === "POST") {
-      const session = await app.launchKiosk(p, kioskCredential(headers));
+      const session = await app.launchKiosk(
+        p,
+        kioskCredential(headers),
+        "Shop kiosk",
+        cookieValue(headers, sessionCookieName(c.local)),
+      );
       return response(
         200,
         {
@@ -162,7 +184,12 @@ export async function dispatch(
         },
         // Keep the renewal credential for 30 days; server-side authorization
         // still expires after 12h and renewal always requires mentor sign-in.
-        { "set-cookie": kioskCookie(session.credential, 30 * 86400) },
+        {
+          "set-cookie": [
+            kioskCookie(session.credential, 30 * 86400),
+            ...clearedSessionCookies(c.local),
+          ],
+        },
       );
     }
     if (path === "/api/mentor/kiosks" && method === "GET")
@@ -437,7 +464,9 @@ export async function dispatch(
       }),
     );
     return response(500, {
-      message: "Unable to confirm a saved result. Retry the same operation.",
+      message: req.path.startsWith("/api/auth/")
+        ? "Sign-in is temporarily unavailable. Please try again."
+        : "Unable to confirm a saved result. Retry the same operation.",
     });
   }
 }
@@ -461,7 +490,10 @@ export async function handler(event: any) {
   const cookie = result.headers["set-cookie"];
   if (cookie) {
     delete result.headers["set-cookie"];
-    return { ...result, cookies: [cookie] };
+    return {
+      ...result,
+      cookies: Array.isArray(cookie) ? cookie : [cookie],
+    };
   }
   return result;
 }

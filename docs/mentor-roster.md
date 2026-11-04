@@ -1,6 +1,6 @@
 # Mentor access, roster sync and ID cards
 
-Puncher's home page is mentor Google login. Approved mentors can manage attendance members, create volunteer events and launch the kiosk. Students do not sign into Puncher. An attendance member's participant type is independent of permission to use mentor tools. Only a mentor administrator can grant mentor/administrator access. New mentors sign in once to create a verified access request; the administrator approves it under Manage members → mentor access. The first administrator still uses the existing AWS-authorized bootstrap command. Approval preserves existing Stats roles and member links; roster sync grants no login/reporting permissions.
+Puncher's home page is mentor Google login. Approved mentors can manage attendance members, create volunteer events and launch the kiosk. Mentor login uses the current main branch's server-side OAuth flow and seven-day HttpOnly session, including restoration after a page refresh. Students do not sign into Puncher. An attendance member's participant type is independent of permission to use mentor tools. Only a mentor administrator can grant mentor/administrator access. New mentors sign in once to create a verified access request; the administrator approves it under Manage members → mentor access. The first administrator still uses the existing AWS-authorized bootstrap command. Approval preserves existing Stats roles and member links; roster sync grants no login/reporting permissions.
 
 ## Daily workflow
 
@@ -13,7 +13,7 @@ Mentors can add an exceptional/manual member without a Google account. Roster sy
 
 ## One-time Google Workspace setup
 
-A Workspace administrator must configure this connection; ordinary mentor login does not authorize reading the domain directory.
+A Workspace administrator must configure this connection; ordinary mentor login does not authorize reading the domain directory. The roster service-account credential in Secrets Manager is separate from the OAuth web-client secret in Parameter Store described in [deployment](deployment.md). The existing OAuth login configuration is retained.
 
 1. In a controlled Google Cloud project, enable the Admin SDK API and create a dedicated service account with domain-wide delegation. Generate its JSON credential securely.
 2. A Workspace super administrator authorizes that service account's client ID for **only** `https://www.googleapis.com/auth/admin.directory.user.readonly`. Use a dedicated delegated Workspace account with directory user read privileges covering the whole selected domain. Do not scope it to a subset of organizational units: absent users in a completed snapshot are treated as removed.
@@ -44,7 +44,7 @@ The job has a durable ID/status/counts record and a ten-minute lease. Repeated c
 
 ## Kiosk launch and recovery
 
-**Launch kiosk** requires a current mentor login and sets a random HttpOnly, Secure, SameSite=Strict cookie. The browser clears the mentor token and replaces the dashboard with `/kiosk`. No operator copies a device ID or secret. An internal session ID remains necessary for revocation, audit and idempotent scan recovery; the existing DEVICE key namespace is retained to preserve deployment and data compatibility.
+**Launch kiosk** requires a current mentor login and sets a random HttpOnly, Secure, SameSite=Strict cookie. The server revokes this browser's seven-day mentor session in the same DynamoDB transaction that creates/renews the kiosk session, then clears the mentor and pending OAuth cookies in the response. The browser also clears any in-memory fixture/bearer token and replaces the dashboard with `/kiosk`. A failed transaction leaves the mentor session intact. Other browsers' mentor sessions are unaffected. No operator copies a device ID or secret. An internal session ID remains necessary for revocation, audit and idempotent scan recovery; the existing DEVICE key namespace is retained to preserve deployment and data compatibility.
 
 The server expires kiosk authorization after 12 hours. The renewal cookie can remain for 30 days, but cannot authorize scans after expiry without a new mentor login/launch. Renewal rotates the secret and retains the operation namespace so a saved unconfirmed scan cannot become a fresh toggle. Sessions can be ended from the kiosk or revoked from mentor tools; mentor administrators can revoke any session. Disabling the launching mentor also invalidates their kiosks immediately. Old manually provisioned devices are rejected until a mentor relaunches the kiosk.
 

@@ -575,7 +575,12 @@ export class Puncher {
       return { approved: true };
     });
   }
-  async launchKiosk(p: Principal, presented?: string, label = "Shop kiosk") {
+  async launchKiosk(
+    p: Principal,
+    presented?: string,
+    label = "Shop kiosk",
+    mentorSessionToken?: string,
+  ) {
     mentor(p);
     const [oldId, oldSecret] = (presented ?? "").split(".");
     const generatedId = uid(),
@@ -585,6 +590,12 @@ export class Puncher {
     ).toISOString();
     const session = await atomic(this.store, async (tx) => {
       await this.livePrincipal(tx, p);
+      // Hand over this browser to a kiosk without leaving its seven-day mentor
+      // session usable. Revoke it in the same transaction as session creation.
+      if (mentorSessionToken) {
+        const humanKey = key("SESSION#" + hash(mentorSessionToken));
+        if (await tx.get(humanKey)) await tx.del(humanKey);
+      }
       const previous =
         oldId && oldSecret && oldId.length <= 100 && oldSecret.length <= 200
           ? await tx.get(key("DEVICE#" + oldId))

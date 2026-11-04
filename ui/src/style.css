@@ -184,6 +184,15 @@ small {
   line-height: 0.98;
   margin: 25px 0;
 }
+.google-login {
+  display: inline-block;
+  border: 1px solid #3b8f70;
+  border-radius: 9px;
+  background: #123225;
+  color: #a6f1cd;
+  padding: 12px 20px;
+  font-weight: 700;
+}
 .signin > p:not(.eyebrow) {
   color: var(--muted);
   font-size: 15px;
