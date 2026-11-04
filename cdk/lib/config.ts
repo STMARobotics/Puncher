@@ -17,6 +17,6 @@ export const config: Config = {
   googleClientId:
     "574028865613-b8apa4bcpai776gtsqm14mdej3iubeha.apps.googleusercontent.com",
   statsUrl: "https://stats.7028robotics.com",
-  repository: "STMARobotics/Puncher",
+  repository: "STMARobotics@32277731/Puncher@1443278208",
   tableName: "puncher-prod-records",
 };
