@@ -1,5 +1,7 @@
 # ARCHITECTURE
 
+The current mentor-only workflow, manual asynchronous roster sync and scoped kiosk sessions are described in [mentor roster architecture](mentor-roster.md). Internal Staff/API_SCOPE and stats:staff names are retained for deployed-resource and Stats compatibility; public Puncher terminology is mentor.
+
 Puncher uses React/Vite, TypeScript, Node 24 Lambda, DynamoDB and TypeScript CDK. One language makes domain rules, UI DTOs and infrastructure approachable for students; React introduces a second frontend convention alongside the team's Angular app but avoids a large component framework. Plain accessible controls and CSS keep maintenance small. Business rules live in service/domain.ts, persistence in service/store.ts, and the same HTTP dispatcher serves Lambda and the local Node adapter.
 
 Inspected FMEA main commit 8e9afec5d1db54557d886dd9c835b904166e92d5: README, workspace/service manifests, Google verification/authorizer, local adapter, create-FMEA handler, CDK backend/frontend/certificate/config/bin and deploy workflow. Reference: https://github.com/STMARobotics/fmea-app. Adopt lowercase table keys, optional GSI1/GSI2, GIS server verification, HTTP API Lambda authorizer without caching, same-origin API, private S3/OAC and separate regional stacks. Do not reuse any FMEA resource, OAuth ID, hosted zone ID or deployment role. Local DynamoDB endpoint support is an intentional extension.

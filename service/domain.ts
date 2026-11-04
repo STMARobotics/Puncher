@@ -1,4 +1,6 @@
 import { type Store, Tx, atomic, all } from "./store";
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { assignCard } from "./card-codes";
 import {
   type Row,
   type Principal,
@@ -66,6 +68,27 @@ export class Puncher {
         const member = await tx.get(key(`MEMBER#${r.memberId}`));
         assert(member?.active, "Member account is inactive.", 403);
       }
+    } else {
+      assert(
+        r.sessionType === "mentor-launch" && r.launchedBy,
+        "A mentor must launch this kiosk.",
+        403,
+      );
+      const owner = await tx.get(key("IDENTITY#" + r.launchedBy));
+      assert(
+        owner?.enabled &&
+          owner.roles?.some((role: string) =>
+            ["mentor", "admin"].includes(role),
+          ),
+        "The mentor who launched this kiosk no longer has access.",
+        403,
+      );
+      if (owner.memberId)
+        assert(
+          (await tx.get(key("MEMBER#" + owner.memberId)))?.active,
+          "The mentor account is inactive.",
+          403,
+        );
     }
     return r;
   }
@@ -331,14 +354,14 @@ export class Puncher {
     return { expired };
   }
   async saveMember(p: Principal, input: any, id = uid()) {
-    admin(p);
+    mentor(p);
     const displayName = text(input.displayName, "Name", 100);
     assert(
       ["student", "mentor"].includes(input.memberKind),
       "Invalid member kind.",
     );
     assert(typeof input.active === "boolean", "Active is required.");
-    const card =
+    const requestedCard =
       input.barcode === "" || input.barcode == null
         ? undefined
         : barcode(input.barcode);
@@ -346,8 +369,26 @@ export class Puncher {
       await this.livePrincipal(tx, p);
       const k = key(`MEMBER#${id}`);
       const previous = await tx.get(k);
+      if (!previous) {
+        const sync = await tx.get(key("APP#PUNCHER", "ROSTER_SYNC"));
+        assert(
+          !sync ||
+            !["queued", "running"].includes(sync.status) ||
+            sync.leaseUntil <= this.clock().toISOString(),
+          "Wait for the roster sync before adding a manual member.",
+          409,
+        );
+      }
+      assert(
+        !input.active || !previous?.directorySuspended,
+        "Reactivate this member in Google before enabling attendance.",
+      );
+      const card = await assignCard(tx, id, requestedCard ?? previous?.barcode);
       if (card !== previous?.barcode) {
-        if (previous?.barcode) await tx.del(key(`CARD#${previous.barcode}`));
+        if (previous?.barcode) {
+          await assignCard(tx, id, previous.barcode);
+          await tx.del(key(`CARD#${previous.barcode}`));
+        }
         if (card) {
           const claim = await tx.get(key(`CARD#${card}`));
           assert(
@@ -363,6 +404,15 @@ export class Puncher {
         displayName,
         memberKind: input.memberKind,
         active: input.active,
+        manuallyDisabled:
+          previous && previous.active === input.active
+            ? !!previous.manuallyDisabled
+            : !input.active,
+        email: previous?.directoryUserId
+          ? previous.email
+          : typeof input.email === "string"
+            ? input.email.trim().slice(0, 254)
+            : previous?.email,
         barcode: card,
         gsi1pk: "MEMBERS",
         gsi1sk: id,
@@ -372,7 +422,40 @@ export class Puncher {
         cardChanged: card !== previous?.barcode,
         active: input.active,
       });
-      return { memberId: id };
+      return { memberId: id, barcode: card };
+    });
+  }
+  async replaceCard(p: Principal, id: string, operationId: string) {
+    mentor(p);
+    assert(
+      typeof operationId === "string" && /^[a-f0-9-]{36}$/i.test(operationId),
+      "A replacement operation ID is required.",
+    );
+    return atomic(this.store, async (tx) => {
+      await this.livePrincipal(tx, p);
+      const opKey = key("OP#" + p.id, "CARD#" + operationId);
+      const existing = await tx.get(opKey);
+      if (existing) {
+        assert(
+          existing.memberId === id,
+          "Operation belongs to another member.",
+          409,
+        );
+        return existing.result;
+      }
+      const member = await tx.get(key("MEMBER#" + id));
+      assert(member, "Member not found.", 404);
+      if (member.barcode) {
+        await assignCard(tx, id, member.barcode);
+        await tx.del(key("CARD#" + member.barcode));
+      }
+      const card = await assignCard(tx, id);
+      await tx.put({ ...member, barcode: card });
+      await tx.put(
+        row(opKey.pk, opKey.sk, { memberId: id, result: { barcode: card } }),
+      );
+      await this.audit(tx, p, "member.card_replaced", id);
+      return { barcode: card };
     });
   }
   async saveIdentity(p: Principal, input: any) {
@@ -397,6 +480,11 @@ export class Puncher {
       "Invalid permissions.",
     );
     assert(typeof input.enabled === "boolean", "Enabled flag required.");
+    assert(
+      sub !== p.id || (input.enabled && input.roles.includes("admin")),
+      "You cannot remove your own administrator access.",
+      403,
+    );
     return atomic(this.store, async (tx) => {
       await this.livePrincipal(tx, p);
       const k = key(`IDENTITY#${sub}`);
@@ -404,6 +492,11 @@ export class Puncher {
       if (input.memberId) {
         const member = await tx.get(key(`MEMBER#${input.memberId}`));
         assert(member, "Member not found.");
+        assert(
+          !member.directoryUserId || member.directoryUserId === sub,
+          "Member is linked to a different Google Directory account.",
+          409,
+        );
         const claim = await tx.get(key(`BINDING#${input.memberId}`));
         assert(
           !claim || claim.googleSub === sub,
@@ -433,34 +526,111 @@ export class Puncher {
   }
   async createDevice(p: Principal, label: string) {
     admin(p);
-    const id = uid(),
-      secret = uid() + uid();
-    const expiresAt = new Date(
-      this.clock().getTime() + 180 * 86400000,
-    ).toISOString();
-    await atomic(this.store, async (tx) => {
+    return this.launchKiosk(p, undefined, label);
+  }
+  async approveMentor(
+    p: Principal,
+    sub: string,
+    administrator: boolean,
+    statsReports: boolean,
+  ) {
+    admin(p);
+    return atomic(this.store, async (tx) => {
       await this.livePrincipal(tx, p);
+      const requestKey = key("MENTOR_REQUEST#" + sub),
+        request = await tx.get(requestKey);
+      assert(
+        request && request.ttl > this.clock().getTime() / 1000,
+        "Mentor request expired or not found. Ask them to sign in again.",
+        404,
+      );
+      const k = key("IDENTITY#" + sub),
+        before = await tx.get(k);
+      // Preserve Stats roles and the existing member binding when adding Puncher access.
+      const roles = [
+        ...new Set([
+          ...(before?.roles ?? []),
+          "mentor",
+          ...(administrator ? ["admin"] : []),
+          ...(statsReports ? ["stats:staff"] : []),
+        ]),
+      ];
+      await tx.put({
+        ...before,
+        ...row(k.pk, k.sk, {
+          googleSub: sub,
+          memberId: before?.memberId,
+          email: request.email,
+          enabled: true,
+          roles,
+          gsi1pk: "IDENTITIES",
+          gsi1sk: sub,
+        }),
+      });
+      await tx.del(requestKey);
+      await this.audit(tx, p, "mentor.approved", sub, {
+        administrator,
+        statsReports,
+      });
+      return { approved: true };
+    });
+  }
+  async launchKiosk(p: Principal, presented?: string, label = "Shop kiosk") {
+    mentor(p);
+    const [oldId, oldSecret] = (presented ?? "").split(".");
+    const generatedId = uid(),
+      secret = randomBytes(32).toString("base64url");
+    const expiresAt = new Date(
+      this.clock().getTime() + 12 * 3600000,
+    ).toISOString();
+    const session = await atomic(this.store, async (tx) => {
+      await this.livePrincipal(tx, p);
+      const previous =
+        oldId && oldSecret && oldId.length <= 100 && oldSecret.length <= 200
+          ? await tx.get(key("DEVICE#" + oldId))
+          : undefined;
+      const expected = Buffer.from(previous?.secretHash ?? ""),
+        actual = Buffer.from(hash(oldSecret ?? ""));
+      const resumed =
+        !!previous &&
+        expected.length === actual.length &&
+        timingSafeEqual(expected, actual);
+      const id = resumed ? oldId : generatedId;
       await tx.put(
         row(`DEVICE#${id}`, "METADATA", {
           deviceId: id,
           label: text(label, "Device name", 80),
           secretHash: hash(secret),
           enabled: true,
+          sessionType: "mentor-launch",
+          launchedBy: p.id,
+          launchedAt: this.clock().toISOString(),
+          ttl: Math.floor(this.clock().getTime() / 1000) + 31 * 86400,
           expiresAt,
           gsi1pk: "DEVICES",
           gsi1sk: id,
         }),
       );
-      await this.audit(tx, p, "device.created", id);
+      await this.audit(tx, p, "kiosk.launched", id, { resumed });
+      return { sessionId: id, resumed };
     });
-    return { credential: `${id}.${secret}`, expiresAt };
+    return {
+      credential: `${session.sessionId}.${secret}`,
+      expiresAt,
+      ...session,
+    };
   }
   async revokeDevice(p: Principal, id: string) {
-    admin(p);
+    mentor(p);
     return atomic(this.store, async (tx) => {
       await this.livePrincipal(tx, p);
       const d = await tx.get(key(`DEVICE#${id}`));
       assert(d, "Device not found.", 404);
+      assert(
+        p.roles.includes("admin") || d.launchedBy === p.id,
+        "This kiosk belongs to a different mentor.",
+        403,
+      );
       await tx.put({ ...d, enabled: false });
       await this.audit(tx, p, "device.revoked", id);
       return { revoked: true };

@@ -11,6 +11,13 @@ import { uid, eligible, key } from "../service/model";
 import { row } from "../service/model";
 import { atomic } from "../service/store";
 import { shopTotals } from "../service/shop-totals";
+import { assignCard } from "../service/card-codes";
+import {
+  startRosterSync,
+  runRosterSync,
+  rosterStatus,
+  linkRosterMember,
+} from "../service/roster";
 const endpoint = process.env.DYNAMODB_ENDPOINT || "http://127.0.0.1:8000";
 assert.ok(["localhost", "127.0.0.1"].includes(new URL(endpoint).hostname));
 const client = new DynamoDBClient({
@@ -52,26 +59,101 @@ after(async () => {
     await client.send(new DeleteTableCommand({ TableName: TableName }));
   client.destroy();
 });
-test('activity outbox commits once with checkout and voided volunteer credit on real DynamoDB', async () => {
-  const { app, db, advance } = await setup({ orgId: 'example-team' });
+
+test("roster sync and card replacement preserve canonical attendance on real DynamoDB", async () => {
+  const { db, app, advance } = await setup({ orgId: "example-team" });
+  await app.scan(device, "000123", uid());
+  advance(60);
+  await app.scan(device, "000123", uid());
+  const hours = await all(db, "MEMBER#member-a", { prefix: "SHOP#" });
+  const queue: string[] = [];
+  const jobs = await Promise.all([
+    startRosterSync(db, mentor, async (id) => {
+      queue.push(id);
+    }),
+    startRosterSync(db, mentor, async (id) => {
+      queue.push(id);
+    }),
+  ]);
+  assert.equal(jobs[0].jobId, jobs[1].jobId);
+  await runRosterSync(db, jobs[0].jobId, async () => [
+    {
+      id: "google-alex",
+      email: "alex@stmarobotics.org",
+      displayName: "Alex Example",
+      active: true,
+    },
+  ]);
+  assert.equal((await rosterStatus(db)).status, "completed");
+  await linkRosterMember(db, mentor, "google-alex", "member-a");
+  assert.equal((await db.get(key("MEMBER#member-a")))?.barcode, "000123");
+  assert.deepEqual(
+    await all(db, "MEMBER#member-a", { prefix: "SHOP#" }),
+    hours,
+  );
+  const operationId = uid();
+  const replacements = await Promise.all([
+    app.replaceCard(mentor, "member-a", operationId),
+    app.replaceCard(mentor, "member-a", operationId),
+  ]);
+  assert.equal(replacements[0].barcode, replacements[1].barcode);
+  assert.notEqual(replacements[0].barcode, "000123");
+  assert.equal(await db.get(key("CARD#000123")), undefined);
+  assert.equal((await db.get(key("CARDCODE#000123")))?.memberId, "member-a");
+  await assert.rejects(
+    atomic(db, (tx) => assignCard(tx, "member-b", "000123")),
+  );
+});
+
+test("concurrent code allocation retries collisions against real DynamoDB conditions", async () => {
+  const { db } = await setup();
+  const allocate = (id: string, fallback: string) => {
+    let calls = 0;
+    return atomic(db, (tx) =>
+      assignCard(tx, id, undefined, () =>
+        ++calls === 1 ? "654321" : fallback,
+      ),
+    );
+  };
+  const codes = await Promise.all([
+    allocate("new-a", "654322"),
+    allocate("new-b", "654323"),
+  ]);
+  assert.equal(new Set(codes).size, 2);
+  for (const code of codes) assert.ok(await db.get(key("CARD#" + code)));
+});
+test("activity outbox commits once with checkout and voided volunteer credit on real DynamoDB", async () => {
+  const { app, db, advance } = await setup({ orgId: "example-team" });
   const checkout = uid();
-  await app.scan(device, '000123', uid());
+  await app.scan(device, "000123", uid());
   advance(3600);
-  await Promise.all([app.scan(device, '000123', checkout), app.scan(device, '000123', checkout)]);
+  await Promise.all([
+    app.scan(device, "000123", checkout),
+    app.scan(device, "000123", checkout),
+  ]);
   const event = await app.saveEvent(mentor, {
-    title: 'Synthetic outreach',
-    eventDate: '2026-05-31',
-    hours: '0.5',
+    title: "Synthetic outreach",
+    eventDate: "2026-05-31",
+    hours: "0.5",
   });
-  await app.award(mentor, event.eventId, '000123');
-  await app.removeAward(mentor, event.eventId, 'member-a', 'Synthetic correction');
+  await app.award(mentor, event.eventId, "000123");
+  await app.removeAward(
+    mentor,
+    event.eventId,
+    "member-a",
+    "Synthetic correction",
+  );
   const date = new Date().toISOString().slice(0, 10);
-  const rows = await all(db, 'OUTBOX#example-team#puncher#' + date);
+  const rows = await all(db, "OUTBOX#example-team#puncher#" + date);
   assert.equal(rows.length, 3);
   assert.equal(rows.filter((r) => r.shopSeconds === 3600).length, 1);
   assert.deepEqual(
     rows
-      .filter((r) => r.volunteerSeconds !== 0 || (r.entityVersion === 2 && r.shopSeconds === 0))
+      .filter(
+        (r) =>
+          r.volunteerSeconds !== 0 ||
+          (r.entityVersion === 2 && r.shopSeconds === 0),
+      )
       .map((r) => [r.entityVersion, r.volunteerSeconds])
       .sort(),
     [

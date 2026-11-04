@@ -1,5 +1,20 @@
 # VERIFICATION RECORD
 
+## Mentor roster and kiosk workflow · November 4, 2026
+
+The current workflow is documented in [mentor roster](mentor-roster.md). This update was verified on Node 24.22.2 using a clean locked source snapshot, official DynamoDB Local 1.25.1 and pinned headless Chromium:
+
+- `npm run check`: all workspace builds, default application synthesis and 70 unit/infrastructure tests. New cases cover complete Directory pagination, source failures, stable barcode allocation, suspension/removal, manual inactive overrides, explicit legacy linking, duplicate worker claims, mentor request approval, role isolation and kiosk secret rotation/revocation. Opt-in CDK assertions verify worker-only secret access, no identity writes, FIFO delivery and the existing cleanup schedule only.
+- Nine real DynamoDB Local integration tests, including concurrent code collisions, roster linking without history changes and idempotent card replacement. Disposable test tables only.
+- Sixteen Chromium browser scenarios across desktop and 390px viewports. New coverage includes mentor-only home, direct event creation, kiosk launch/end without mentor API authority, manual roster sync, legacy linking, external barcode CSV and blocking pending scans from an unrelated session. Existing attendance, camera-denial, manual-input and animation tests still pass. Desktop/member and mobile roster screenshots were visually reviewed.
+- Shared activity contract hashes, event identities and Pipe round trips pass unchanged; the separate integration bus/archive synthesizes. Existing native member IDs and the Stats reader schema are preserved. Roster enrollment emits no credit/reward events.
+
+Windows sandbox adaptations match the earlier harmonization validation: materialize locked npm workspaces as local copies instead of blocked symlinks; run Playwright against separately managed app servers because managed teardown hangs. Linux CI retains the normal lifecycle. Tests use an explicit synthetic local directory, not Google credentials or production data.
+
+Not exercised: live Google Workspace delegation/secret setup, deployed AWS IAM/queue behavior, real ID generation/printing, physical scanner/camera acceptance or production rollout. The Sync roster button remains unavailable in production until its documented opt-in configuration is deployed. No AWS resources were changed by this update.
+
+## Earlier implementation verification
+
 Implementation verification performed November 2, 2026 on Windows with Node 24.13.1 and official DynamoDB Local 1.25.1 running on JDK 17.
 
 - Production build: TypeScript strict checking, Vite frontend compilation, esbuild service packaging.
