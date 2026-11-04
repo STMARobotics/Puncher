@@ -18,6 +18,7 @@ function env() {
     TABLE_NAME: "puncher-test",
     DYNAMODB_ENDPOINT: "http://127.0.0.1:8000",
     LOCAL_AUTH_FIXTURES: "false",
+    LOCAL_ROSTER_FIXTURES: "false",
     GOOGLE_CLIENT_ID: "test-client",
     ALLOWED_ORIGIN: "http://localhost:5173",
   });

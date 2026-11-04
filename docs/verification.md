@@ -1,5 +1,11 @@
 # VERIFICATION RECORD
 
+## CI fixture environment correction · November 4, 2026
+
+The hosted check exposed a job-wide `LOCAL_ROSTER_FIXTURES=true` setting conflicting with authentication/session tests that deliberately disable local auth. The runtime correctly rejected this unsafe combination. Reproduced the same eight failures locally with the inherited CI flags; the prior local validation did not inherit the roster flag. The workflow now enables the synthetic directory only for the browser-test step, and the three authentication-related test suites explicitly disable roster fixtures in their own environment setup. Production runtime guards are unchanged and their existing test now also verifies that roster fixtures require local auth fixtures.
+
+The original inherited-flag reproducer now passes all 22 affected tests. The complete `npm run check` passes all 74 tests, builds and synthesis using the corrected CI environment. Application code and dependencies are unchanged; the previously recorded database/browser validation remains applicable. Hosted CI must rerun on the published fix before claiming a green GitHub check.
+
 ## Reconciliation with renamed OAuth secret · November 4, 2026
 
 Merged main `69c34df711ee1cda50d0783a4a04619fd050e827`, retaining its renamed `/puncher/google-client-secret` parameter in the backend environment, SSM read grant, KMS encryption-context restriction and deployment instructions. This resolves the backend-stack merge conflict caused by the concurrent rename. CDK type checking, default synthesis and all infrastructure tests passed; the synthesized template also confirms all three references use the new name and the old name is absent. Application, dependency and contract code is unchanged from the preceding validation. This was a local branch reconciliation; no main push or deployment was performed.

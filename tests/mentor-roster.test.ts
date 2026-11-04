@@ -25,6 +25,7 @@ function env() {
     TABLE_NAME: "mentor-test",
     DYNAMODB_ENDPOINT: "http://127.0.0.1:8766",
     LOCAL_AUTH_FIXTURES: "true",
+    LOCAL_ROSTER_FIXTURES: "false",
     ALLOWED_ORIGIN: "http://localhost:5173",
     GOOGLE_CLIENT_ID: "test-client",
   });
