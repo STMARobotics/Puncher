@@ -214,7 +214,8 @@ test("CSV upload preserves existing codes, creates new members and exports exter
     "Group Email [Required],Member Email,Member Name,Member Role,Member Type\n" +
     "frc.students@stmarobotics.org,alex@stmarobotics.org,Alex Example,MEMBER,USER\n" +
     "frc.students@stmarobotics.org,jordan@stmarobotics.org,Jordan Sample,MEMBER,USER\n" +
-    "frc.mentors@stmarobotics.org,casey.imported@stmarobotics.org,Casey Imported,OWNER,USER\n";
+    "ftc.mentors@stmarobotics.org,casey.imported@stmarobotics.org,Casey Imported,OWNER,USER\n" +
+    "ftc.mentors@stmarobotics.org,group@stmarobotics.org,Nested group,MEMBER,GROUP\n";
   const upload = () =>
     page.getByLabel("Google roster CSV").setInputFiles({
       name: "google-members.csv",
@@ -225,6 +226,10 @@ test("CSV upload preserves existing codes, creates new members and exports exter
   await page.getByRole("button", { name: "Preview CSV", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "REVIEW 3 ROSTER ENTRIES" }),
+  ).toBeVisible();
+  await page.getByText("1 row skipped", { exact: true }).click();
+  await expect(
+    page.getByText("Row 5 · Only individual users can be imported."),
   ).toBeVisible();
   await expect(
     page.getByText("Match existing entry", { exact: true }),

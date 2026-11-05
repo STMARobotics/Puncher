@@ -131,6 +131,7 @@ export function RosterUpload({
             <option value="">Read group from CSV</option>
             <option value="frc.students@stmarobotics.org">frc.students</option>
             <option value="frc.mentors@stmarobotics.org">frc.mentors</option>
+            <option value="ftc.mentors@stmarobotics.org">ftc.mentors</option>
           </select>
         </label>
         <button disabled={!file || working} onClick={preview}>
@@ -138,7 +139,7 @@ export function RosterUpload({
         </button>
       </div>
       <p className="muted">
-        Up to 500 people and 128 KB per file. Previews expire after 24 hours.
+        Up to 500 rows and 128 KB per file. Previews expire after 24 hours.
       </p>
       {error && (
         <p role="alert" className="error">
@@ -189,15 +190,38 @@ export function RosterUpload({
               <p>Upload the CSV again to refresh this older preview.</p>
             ))}
           <p role="status">
-            {job.status === "completed"
-              ? "Import finished"
-              : working
-                ? "Importing"
-                : "Import ready"}
-            : {job.processed} of {job.total} processed · {job.counts.created}{" "}
-            added, {job.counts.updated} updated, {job.counts.unchanged}{" "}
-            unchanged.
+            {job.total === 0 ? (
+              "No valid roster entries to import."
+            ) : (
+              <>
+                {job.status === "completed"
+                  ? "Import finished"
+                  : working
+                    ? "Importing"
+                    : "Import ready"}
+                : {job.processed} of {job.total} processed ·{" "}
+                {job.counts.created} added, {job.counts.updated} updated,{" "}
+                {job.counts.unchanged} unchanged.
+              </>
+            )}
           </p>
+          {job.skipped?.length > 0 && (
+            <details>
+              <summary>
+                {job.skipped.length} {job.skipped.length === 1 ? "row" : "rows"}{" "}
+                skipped
+              </summary>
+              <ul>
+                {job.skipped.map(
+                  ({ line, reason }: { line: number; reason: string }) => (
+                    <li key={line}>
+                      Row {line} · {reason}
+                    </li>
+                  ),
+                )}
+              </ul>
+            </details>
+          )}
           {job.status !== "completed" && (
             <button
               disabled={working || (job.status === "preview" && !job.automatic)}

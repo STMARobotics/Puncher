@@ -202,3 +202,37 @@ it("isolates import ownership, checks live mentor revocation and enforces previe
     "expired",
   );
 });
+
+it("reports skipped rows on preview and reload and imports only valid entries", async () => {
+  const db = await empty();
+  const source =
+    csv(["Alex"]) +
+    "\nfrc.students@stmarobotics.org,group@stmarobotics.org,Nested group,MEMBER,GROUP";
+  const job = await previewRoster(db, mentor, uid(), source);
+  expect(job.total).toBe(1);
+  expect(job.skipped).toEqual([
+    { line: 3, reason: "Only individual users can be imported." },
+  ]);
+  expect(
+    (await applyRosterBatch(db, mentor, job.importId, 0)).counts.created,
+  ).toBe(1);
+  expect((await rosterImportStatus(db, mentor, job.importId)).skipped).toEqual(
+    job.skipped,
+  );
+
+  const skippedOnly = await previewRoster(
+    db,
+    mentor,
+    uid(),
+    source
+      .split("\n")
+      .filter((_, index) => index !== 1)
+      .join("\n"),
+  );
+  expect(skippedOnly).toMatchObject({
+    status: "completed",
+    total: 0,
+    skipped: [{ line: 2 }],
+  });
+  expect(await all(db, "MEMBERS", { index: "GSI1" })).toHaveLength(1);
+});

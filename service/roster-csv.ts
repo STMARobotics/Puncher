@@ -2,23 +2,27 @@ import { parse } from "csv-parse/sync";
 import { assert, Fault } from "./model";
 
 export const rosterLimits = { bytes: 128 * 1024, rows: 500, batch: 10 };
+const groupRoles = {
+  "frc.students@stmarobotics.org": "student",
+  "frc.mentors@stmarobotics.org": "mentor",
+  "ftc.mentors@stmarobotics.org": "mentor",
+} as const;
 export type CsvPerson = {
   displayName: string;
   email: string;
   line: number;
-  groupEmail?: string;
+  memberKind: (typeof groupRoles)[keyof typeof groupRoles];
 };
-export function rosterEmail(value: unknown): string {
-  assert(typeof value === "string", "An email address is required.");
-  const email = value.trim().toLowerCase();
-  assert(
-    email.length <= 254 &&
-      /^[a-z0-9][a-z0-9._%+\-]*@stmarobotics\.org$/.test(email),
-    "Use a stmarobotics.org email address.",
-  );
-  return email;
+export type SkippedRosterRow = { line: number; reason: string };
+
+function groupRole(group: unknown) {
+  if (typeof group !== "string") return undefined;
+  const email = group.trim().toLowerCase();
+  if (Object.hasOwn(groupRoles, email))
+    return groupRoles[email as keyof typeof groupRoles];
 }
-export function parseRosterCsv(csv: unknown): CsvPerson[] {
+
+export function parseRosterCsv(csv: unknown, fallbackGroup?: unknown) {
   assert(
     typeof csv === "string" &&
       Buffer.byteLength(csv, "utf8") <= rosterLimits.bytes,
@@ -28,13 +32,18 @@ export function parseRosterCsv(csv: unknown): CsvPerson[] {
     !csv.includes("\uFFFD") && !csv.includes("\0"),
     "The CSV must contain valid UTF-8 text.",
   );
-  let records: Record<string, string>[];
+  let records: {
+    record: Record<string, string>;
+    info: { lines: number; error?: unknown };
+  }[];
   try {
     records = parse(csv, {
       bom: true,
       trim: true,
       skip_empty_lines: true,
       max_record_size: 8192,
+      info: true,
+      relax_column_count: true,
       columns: (headers: string[]) => {
         const columns = headers.map((h) => h.trim().toLowerCase());
         assert(
@@ -60,51 +69,59 @@ export function parseRosterCsv(csv: unknown): CsvPerson[] {
   }
   assert(
     records!.length > 0 && records!.length <= rosterLimits.rows,
-    "Upload between 1 and 500 people per CSV.",
+    "Upload between 1 and 500 rows per CSV.",
   );
+  const fallbackRole = groupRole(fallbackGroup);
+  if (
+    records!.some(
+      ({ record, info }) =>
+        !info.error &&
+        !Object.hasOwn(record, "group email [required]") &&
+        !Object.hasOwn(record, "group email"),
+    )
+  )
+    assert(fallbackRole, "Select the source group for this older CSV export.");
+
+  const people: CsvPerson[] = [];
+  const skipped: SkippedRosterRow[] = [];
   const seen = new Set<string>();
-  return records!.map((record, index) => {
-    const line = index + 2,
-      displayName = record["member name"].trim().replace(/\s+/g, " ");
-    assert(
-      displayName.length > 0 &&
-        displayName.length <= 100 &&
-        !/[\u0000-\u001f\u007f]/.test(displayName),
-      `Row ${line}: Member Name must contain 1–100 characters.`,
-    );
-    let email: string;
-    try {
-      email = rosterEmail(record["member email"]);
-    } catch {
-      assert(false, `Row ${line}: use a valid stmarobotics.org Member Email.`);
+  for (const { record, info } of records!) {
+    const line = info.lines;
+    if (info.error) {
+      skipped.push({ line, reason: "Wrong number of columns." });
+      continue;
     }
-    assert(
-      !seen.has(email!),
-      `Row ${line}: duplicate Member Email. Remove duplicate rows before uploading.`,
-    );
-    seen.add(email!);
-    assert(
-      ["MEMBER", "MANAGER", "OWNER"].includes(
-        record["member role"].toUpperCase(),
-      ),
-      `Row ${line}: invalid Member Role.`,
-    );
-    assert(
-      !record["member type"] || record["member type"].toUpperCase() === "USER",
-      `Row ${line}: only individual users can be imported.`,
-    );
-    // Google group roles are deliberately discarded. This is attendance enrollment,
-    // not proof of a Google subject or a grant of Puncher/Stats permissions.
+    const type = record["member type"]?.trim().toUpperCase();
+    const displayName = record["member name"].trim().replace(/\s+/g, " ");
+    const email = record["member email"].trim().toLowerCase();
+    const role = record["member role"].trim().toUpperCase();
     const group = record["group email [required]"] ?? record["group email"];
-    if (group !== undefined)
-      assert(group.trim(), `Row ${line}: Group Email is required.`);
-    return {
-      displayName,
-      email: email!,
-      line,
-      ...(group !== undefined
-        ? { groupEmail: group.trim().toLowerCase() }
-        : {}),
-    };
-  });
+    const memberKind = group === undefined ? fallbackRole : groupRole(group);
+    let reason: string | undefined;
+    if (type && type !== "USER")
+      reason = "Only individual users can be imported.";
+    else if (
+      !displayName ||
+      displayName.length > 100 ||
+      /[\u0000-\u001f\u007f]/.test(displayName)
+    )
+      reason = "Member Name must contain 1–100 characters.";
+    else if (
+      email.length > 254 ||
+      !/^[a-z0-9][a-z0-9._%+\-]*@stmarobotics\.org$/.test(email)
+    )
+      reason = "Use a valid stmarobotics.org Member Email.";
+    else if (!["MEMBER", "MANAGER", "OWNER"].includes(role))
+      reason = "Invalid Member Role.";
+    else if (!memberKind)
+      reason = "Group Email must be frc.students, frc.mentors, or ftc.mentors.";
+    else if (seen.has(email)) reason = "Duplicate Member Email.";
+    if (reason || !memberKind) {
+      skipped.push({ line, reason: reason ?? "Unknown attendance role." });
+      continue;
+    }
+    seen.add(email);
+    people.push({ displayName, email, line, memberKind });
+  }
+  return { people, skipped };
 }

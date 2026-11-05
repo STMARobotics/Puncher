@@ -1,6 +1,11 @@
 import { Puncher } from "./domain";
 import { assignCard } from "./card-codes";
-import { parseRosterCsv, rosterLimits, type CsvPerson } from "./roster-csv";
+import {
+  parseRosterCsv,
+  rosterLimits,
+  type CsvPerson,
+  type SkippedRosterRow,
+} from "./roster-csv";
 import { all, atomic, type Store } from "./store";
 import {
   assert,
@@ -13,16 +18,10 @@ import {
   type Row,
 } from "./model";
 
-const groupRoles = {
-  "frc.students@stmarobotics.org": "student",
-  "frc.mentors@stmarobotics.org": "mentor",
-} as const;
-type AttendanceRole = (typeof groupRoles)[keyof typeof groupRoles];
 type Match = { memberId: string; version?: number };
 type StagedPerson = CsvPerson & {
   newMemberId: string;
   match?: Match;
-  memberKind: AttendanceRole;
   canEnroll: boolean;
 };
 const normalizedName = (name: string) =>
@@ -67,7 +66,11 @@ function dto(job: Row, includeRows = true) {
     total: job.people.length,
     counts: job.counts,
     ...(includeRows
-      ? { people: job.people, automatic: job.automatic === true }
+      ? {
+          people: job.people,
+          skipped: job.skipped ?? [],
+          automatic: job.automatic === true,
+        }
       : {}),
   };
 }
@@ -80,18 +83,8 @@ export async function previewRoster(
 ) {
   mentor(p);
   assert(validId(id), "A valid upload request ID is required.");
-  const people = parseRosterCsv(csv).map((person) => {
-      const group = person.groupEmail ?? groupEmail;
-      assert(
-        typeof group === "string" && Object.hasOwn(groupRoles, group),
-        `Row ${person.line}: use the frc.students or frc.mentors Google group. For older exports, select the source group.`,
-      );
-      return {
-        ...person,
-        memberKind: groupRoles[group as keyof typeof groupRoles],
-      };
-    }),
-    sourceHash = hash(
+  const { people, skipped } = parseRosterCsv(csv, groupEmail);
+  const sourceHash = hash(
       JSON.stringify([people.map((person) => person.memberKind), csv]),
     ),
     k = importKey(id);
@@ -105,7 +98,9 @@ export async function previewRoster(
     );
     return dto(existing);
   }
-  const members = await all(db, "MEMBERS", { index: "GSI1" });
+  const members = people.length
+    ? await all(db, "MEMBERS", { index: "GSI1" })
+    : [];
   const byEmail = new Map<string, Row[]>();
   for (const member of members)
     if (typeof member.email === "string" && member.email.trim()) {
@@ -114,8 +109,8 @@ export async function previewRoster(
     }
   const staged: StagedPerson[] = [];
   async function stage(
-    person: CsvPerson & { memberKind: AttendanceRole },
-  ): Promise<StagedPerson> {
+    person: CsvPerson,
+  ): Promise<StagedPerson | SkippedRosterRow> {
     const [claim, match] = await Promise.all([
       db.get(emailKey(person.email)),
       db.get(matchKey(person)),
@@ -128,11 +123,11 @@ export async function previewRoster(
       : undefined;
     const sameEmail = byEmail.get(person.email) ?? [];
     const exact = sameEmail.filter((member) => matchesPerson(member, person));
-    assert(
-      matchesPerson(candidate, person) || exact.length <= 1,
-      `Row ${person.line}: more than one roster entry has this name and email.`,
-      409,
-    );
+    if (!matchesPerson(candidate, person) && exact.length > 1)
+      return {
+        line: person.line,
+        reason: "More than one roster entry has this name and email.",
+      };
     const known = matchesPerson(candidate, person) ? candidate : exact[0];
     return {
       ...person,
@@ -146,12 +141,18 @@ export async function previewRoster(
   }
   // Bound lookup concurrency so larger exports fit the request deadline.
   for (let offset = 0; offset < people.length; offset += 20) {
-    staged.push(
-      ...(await Promise.all(people.slice(offset, offset + 20).map(stage))),
+    const results = await Promise.all(
+      people.slice(offset, offset + 20).map(stage),
     );
+    for (const result of results) {
+      if ("reason" in result) skipped.push(result);
+      else staged.push(result);
+    }
   }
+  skipped.sort((a, b) => a.line - b.line);
   assert(
-    Buffer.byteLength(JSON.stringify(staged), "utf8") <= 256 * 1024,
+    Buffer.byteLength(JSON.stringify({ staged, skipped }), "utf8") <=
+      256 * 1024,
     "The normalized roster is too large; split the CSV into smaller files.",
   );
   const app = new Puncher(db);
@@ -169,7 +170,8 @@ export async function previewRoster(
       sourceHash,
       automatic: true,
       people: staged,
-      status: "preview",
+      skipped,
+      status: staged.length ? "preview" : "completed",
       cursor: 0,
       counts: { created: 0, updated: 0, unchanged: 0 },
       expiresAt: new Date(Date.now() + 86400000).toISOString(),
