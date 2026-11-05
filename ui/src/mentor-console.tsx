@@ -34,7 +34,7 @@ export function MentorConsole({ administrator }: { administrator: boolean }) {
   return (
     <>
       <div className="page-heading">
-        <h1>MANAGE STUDENTS</h1>
+        <h1>MANAGE MEMBERS</h1>
       </div>
       <nav className="tabs" aria-label="Mentor tools">
         {[
@@ -52,7 +52,7 @@ export function MentorConsole({ administrator }: { administrator: boolean }) {
         ))}
       </nav>
       {tab === "students" ? (
-        <Members />
+        <Members administrator={administrator} />
       ) : tab === "kiosks" ? (
         <KioskSessions />
       ) : tab === "mentor access" ? (
@@ -63,7 +63,7 @@ export function MentorConsole({ administrator }: { administrator: boolean }) {
     </>
   );
 }
-function Members() {
+function Members({ administrator }: { administrator: boolean }) {
   const empty = () => ({
     memberId: crypto.randomUUID(),
     displayName: "",
@@ -75,6 +75,7 @@ function Members() {
     [form, setForm] = useState<any>(empty),
     [editing, setEditing] = useState(false),
     [busy, setBusy] = useState(false),
+    [adminInvitation, setAdminInvitation] = useState(""),
     [error, setError] = useState(""),
     [message, setMessage] = useState("");
   async function refresh() {
@@ -137,6 +138,30 @@ function Members() {
       setBusy(false);
     }
   }
+  async function grantAdministrator(member: any) {
+    const email =
+      member.email || prompt("Enter the member’s stmarobotics.org Google email.");
+    if (
+      !email ||
+      !confirm(`Grant administrator access to ${member.displayName} (${email})?`)
+    )
+      return;
+    setBusy(true);
+    setError("");
+    setAdminInvitation("");
+    try {
+      const { path } = await api(
+        `/admin/members/${encodeURIComponent(member.memberId)}/invite-admin`,
+        { email },
+      );
+      setAdminInvitation(new URL(path, location.origin).href);
+      setMessage("");
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <>
       <RosterUpload onComplete={refresh} />
@@ -158,6 +183,17 @@ function Members() {
           </p>
         )}
         {message && <p role="status">{message}</p>}
+        {adminInvitation && (
+          <label>
+            Share this administrator invitation with the member. It expires in
+            24 hours.
+            <input
+              readOnly
+              value={adminInvitation}
+              onFocus={(event) => event.currentTarget.select()}
+            />
+          </label>
+        )}
       </section>
       <section className="panel">
         <h2>{editing ? "EDIT ROSTER ENTRY" : "ADD ROSTER ENTRY"}</h2>
@@ -261,6 +297,15 @@ function Members() {
                     >
                       Replace card code
                     </button>
+                    {administrator && m.active && (
+                      <button
+                        className="quiet"
+                        disabled={busy}
+                        onClick={() => grantAdministrator(m)}
+                      >
+                        Grant admin
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -369,8 +414,8 @@ function MentorAccess() {
     <section className="panel">
       <h2>MENTOR ACCESS</h2>
       <p>
-        New mentors sign in with Google once to request approval. Roster sync
-        never grants mentor permissions.
+        Mentor permissions are assigned by a Puncher administrator. Review
+        existing pending requests here.
       </p>
       {error && <p role="alert">{error}</p>}
       <label className="checkbox">

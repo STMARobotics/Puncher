@@ -1,11 +1,13 @@
 # Mentor access, roster CSV uploads and ID cards
 
-Mentors sign in with Google to manage attendance members, create volunteer events and launch the kiosk. New mentors sign in once to request access. A mentor administrator approves the request under Manage students → Mentor access. Existing Google login uses the OAuth web-client secret in Parameter Store as described in [deployment](deployment.md).
+Mentors sign in with Google to manage attendance members, create volunteer events and launch the kiosk. A Puncher administrator grants mentor permissions through the identity administration API using a verified Google subject. Existing Google login uses the OAuth web-client secret in Parameter Store as described in [deployment](deployment.md).
+
+To grant administrator access, open **Manage members**, choose **Grant admin** on an active roster entry and share the invitation link with that person. If the entry has no email, enter their school Google email. The link expires in 24 hours and works once. Puncher grants access after the recipient signs in with the specified email and checks that neither account is linked to a conflicting roster entry.
 
 ## Upload the roster
 
 1. Export the Google Workspace group roster. The current format includes Group Email [Required], Member Email, Member Name, Member Role and Member Type. [Google Workspace group export instructions](https://knowledge.workspace.google.com/admin/groups/view-a-groups-members#export-a-list-of-group-members)
-2. In Puncher, open **Manage students → Upload roster CSV** and choose **Preview CSV**. For older exports without a group email column, select the source group once for the file. Uploads accept up to 500 rows and 128 KB per file.
+2. In Puncher, open **Manage members → Upload roster CSV** and choose **Preview CSV**. For older exports without a group email column, select the source group once for the file. Uploads accept up to 500 rows and 128 KB per file.
 3. Review the automatic matches and any skipped rows, then select **Import roster**. Both name and email must match an existing entry to reuse its card, role, history and activation status. New entries receive an active six-digit card. The `frc.students` group assigns Student, and `frc.mentors` or `ftc.mentors` assigns Mentor for attendance. Google group ownership and attendance roles are separate from approved Puncher login privileges. Nested groups and invalid rows are listed by row number and skipped.
 4. If a different name already uses the same email, Puncher creates a separate card and keeps the existing sign-in binding. An administrator can review account access separately.
 5. Use **Export active roster CSV** for external card generation. Import the barcode column as text to preserve leading zeros.

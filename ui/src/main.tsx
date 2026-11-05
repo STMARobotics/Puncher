@@ -128,7 +128,7 @@ function App() {
   }
   const mentorActions = (
     <>
-      <button onClick={() => navigate("members")}>Manage students</button>
+      <button onClick={() => navigate("members")}>Manage members</button>
       <button onClick={() => navigate("new-event")}>
         Create a volunteer event
       </button>
@@ -227,7 +227,7 @@ function App() {
           <section className="panel mentor-dashboard">
             <h1>MENTOR DASHBOARD</h1>
             <p>
-              Manage students, organize volunteer events, or activate the shop
+              Manage members, organize volunteer events, or activate the shop
               kiosk.
             </p>
             <div className="mentor-actions">{mentorActions}</div>

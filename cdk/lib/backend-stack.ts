@@ -210,11 +210,6 @@ export class BackendStack extends cdk.Stack {
         }),
       );
     permission(humans, ["GetItem"], ["IDENTITY#*", "MEMBER#*"]);
-    permission(
-      humans,
-      ["GetItem", "PutItem", "ConditionCheckItem"],
-      ["MENTOR_REQUEST#*"],
-    );
     permission(devices, ["GetItem"], ["DEVICE#*", "IDENTITY#*", "MEMBER#*"]);
     permission(kiosk, ["GetItem", "ConditionCheckItem"], ["IDENTITY#*"]);
     permission(humans, ["GetItem"], ["SESSION#*"]);

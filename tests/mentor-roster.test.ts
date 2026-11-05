@@ -128,7 +128,7 @@ it("allows mentors to manage basic members but not permissions, and limits stude
     ).statusCode,
   ).toBe(410);
 });
-it("captures verified mentor access requests without granting permissions; only an administrator approves", async () => {
+it("creates no mentor request on first sign-in and restricts approval of existing requests to administrators", async () => {
   env();
   process.env.LOCAL_AUTH_FIXTURES = "false";
   const { db } = await fixture();
@@ -146,8 +146,15 @@ it("captures verified mentor access requests without granting permissions; only 
     human({ authorization: "Bearer verified" }, db, async () => payload),
   ).rejects.toThrow("setup");
   expect(await db.get(key("IDENTITY#new-mentor"))).toBeUndefined();
-  expect((await db.get(key("MENTOR_REQUEST#new-mentor")))?.email).toBe(
-    payload.email,
+  const pendingRequest = key("MENTOR_REQUEST#new-mentor");
+  expect(await db.get(pendingRequest)).toBeUndefined();
+  await atomic(db, (tx) =>
+    tx.put(
+      row(pendingRequest.pk, pendingRequest.sk, {
+        email: payload.email,
+        ttl: Math.floor(Date.now() / 1000) + 600,
+      }),
+    ),
   );
   process.env.LOCAL_AUTH_FIXTURES = "true";
   expect(

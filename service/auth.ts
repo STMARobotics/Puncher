@@ -13,6 +13,25 @@ const google = new OAuth2Client();
 export const verifyGoogle: Verify = async (token, audience) =>
   (await google.verifyIdToken({ idToken: token, audience })).getPayload();
 
+export function assertGoogleIdentity(
+  payload: TokenPayload | undefined,
+  audience: string,
+): asserts payload is TokenPayload & { email: string } {
+  assert(
+    payload?.sub &&
+      ["accounts.google.com", "https://accounts.google.com"].includes(
+        payload.iss,
+      ) &&
+      payload.aud === audience &&
+      payload.exp > Date.now() / 1000 &&
+      payload.email_verified === true &&
+      payload.hd === "stmarobotics.org" &&
+      payload.email?.toLowerCase().endsWith("@stmarobotics.org"),
+    "A verified stmarobotics.org Google identity is required.",
+    401,
+  );
+}
+
 export function cookieValue(
   headers: Record<string, string | undefined>,
   name: string,
@@ -38,7 +57,7 @@ export async function human(
     new RegExp("^Bearer\\s+(.+)$", "i"),
   )?.[1];
   let sub: string;
-  let verifiedEmail: string | undefined, verifiedName: string | undefined;
+  let verifiedEmail: string | undefined;
   let rosterEmail: string | undefined, rosterMemberId: string | undefined;
   if (
     c.fixtures &&
@@ -54,23 +73,9 @@ export async function human(
     } catch {
       throw new Fault(401, "Sign-in expired or invalid. Please sign in again.");
     }
-    assert(
-      t?.sub &&
-        ["accounts.google.com", "https://accounts.google.com"].includes(
-          t.iss,
-        ) &&
-        t.aud === c.googleClientId &&
-        t.exp > Date.now() / 1000 &&
-        t.email_verified === true &&
-        t.hd === "stmarobotics.org" &&
-        t.email?.toLowerCase().endsWith("@stmarobotics.org"),
-      "A verified stmarobotics.org Google identity is required.",
-      401,
-    );
+    assertGoogleIdentity(t, c.googleClientId);
     sub = t.sub;
-    verifiedEmail = t.email!.toLowerCase();
-    verifiedName =
-      typeof t.name === "string" ? t.name.slice(0, 100) : verifiedEmail;
+    verifiedEmail = t.email.toLowerCase();
   } else {
     const cookie = cookieValue(headers, sessionCookieName(c.local));
     assert(cookie, "Sign in with your robotics Google account.", 401);
@@ -85,28 +90,6 @@ export async function human(
     rosterMemberId = session.rosterMemberId;
   }
   const identity = await db.get(key(`IDENTITY#${sub}`));
-  if (
-    verifiedEmail &&
-    (!identity?.enabled ||
-      !identity.roles?.some((r: string) => ["mentor", "admin"].includes(r)))
-  ) {
-    await atomic(db, async (tx) => {
-      const k = key("MENTOR_REQUEST#" + sub);
-      const request = await tx.get(k);
-      if (!request || request.ttl <= Date.now() / 1000)
-        await tx.put(
-          row(k.pk, k.sk, {
-            googleSub: sub,
-            email: verifiedEmail,
-            displayName: verifiedName,
-            requestedAt: new Date().toISOString(),
-            ttl: Math.floor(Date.now() / 1000) + 30 * 86400,
-            gsi1pk: "MENTOR_REQUESTS",
-            gsi1sk: sub,
-          }),
-        );
-    });
-  }
   assert(
     !identity || identity.enabled,
     "Your Puncher access is disabled.",

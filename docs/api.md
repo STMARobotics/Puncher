@@ -20,7 +20,7 @@ All browser writes send JSON and the exact configured Origin. Human routes use a
 | POST | /api/mentor/roster/imports | Mentor. Validate CSV and stage a preview with `{importId,csv}` and optional `groupEmail` for older exports. |
 | GET | /api/mentor/roster/imports/{importId} | Uploading mentor. Preview, automatic matches and progress. |
 | POST | /api/mentor/roster/imports/{importId}/apply | Uploading mentor. Apply a batch with the current `cursor`. Retries return saved progress. |
-| GET | /api/admin/mentor-requests | Administrator; verified Google login requests |
+| GET | /api/admin/mentor-requests | Administrator; requests already in the queue |
 | POST | /api/admin/mentor-requests/{subject}/approve | Administrator; grants mentor plus explicitly selected extra permissions |
 | GET | /api/kiosk/status | Kiosk session availability, expiration and server time |
 | GET | /api/kiosk/totals | Device; anonymous team shop-hour totals only (week/year/all time) |
@@ -36,6 +36,7 @@ All browser writes send JSON and the exact configured Origin. Human routes use a
 | GET / POST | /api/admin/members | Admin; roster / create explicit member/card |
 | PATCH | /api/admin/members/{memberId} | Admin; replace card or deactivate without changing history ID |
 | GET / POST | /api/admin/identities | Admin; exact subject/email/member/permissions mapping |
+| POST | /api/admin/members/{memberId}/invite-admin | Admin; creates a one-time invitation for an active roster entry and verified school Google email |
 | GET | /api/admin/devices | Legacy administrator session list; POST provisioning is retired |
 | DELETE | /api/admin/devices/{deviceId} | Admin; immediate revocation |
 | GET | /api/admin/active | Admin; active roster excludes logically expired visits |
