@@ -2,14 +2,19 @@ import { parse } from "csv-parse/sync";
 import { assert, Fault } from "./model";
 
 export const rosterLimits = { bytes: 128 * 1024, rows: 500, batch: 10 };
-export type CsvPerson = { displayName: string; email: string; line: number };
+export type CsvPerson = {
+  displayName: string;
+  email: string;
+  line: number;
+  groupEmail?: string;
+};
 export function rosterEmail(value: unknown): string {
   assert(typeof value === "string", "An email address is required.");
   const email = value.trim().toLowerCase();
   assert(
     email.length <= 254 &&
       /^[a-z0-9][a-z0-9._%+\-]*@stmarobotics\.org$/.test(email),
-    "Use a stmarobotics.org member email address.",
+    "Use a stmarobotics.org email address.",
   );
   return email;
 }
@@ -55,7 +60,7 @@ export function parseRosterCsv(csv: unknown): CsvPerson[] {
   }
   assert(
     records!.length > 0 && records!.length <= rosterLimits.rows,
-    "Upload between 1 and 500 members per CSV.",
+    "Upload between 1 and 500 people per CSV.",
   );
   const seen = new Set<string>();
   return records!.map((record, index) => {
@@ -90,6 +95,16 @@ export function parseRosterCsv(csv: unknown): CsvPerson[] {
     );
     // Google group roles are deliberately discarded. This is attendance enrollment,
     // not proof of a Google subject or a grant of Puncher/Stats permissions.
-    return { displayName, email: email!, line };
+    const group = record["group email [required]"] ?? record["group email"];
+    if (group !== undefined)
+      assert(group.trim(), `Row ${line}: Group Email is required.`);
+    return {
+      displayName,
+      email: email!,
+      line,
+      ...(group !== undefined
+        ? { groupEmail: group.trim().toLowerCase() }
+        : {}),
+    };
   });
 }

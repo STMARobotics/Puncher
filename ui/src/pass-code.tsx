@@ -11,6 +11,7 @@ export default function PassCode({
   qr?: boolean;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
+  const [feedback, setFeedback] = useState("");
   useLayoutEffect(() => {
     if (!canvas.current) return;
     const render = qr ? qrcode : code128;
@@ -23,8 +24,29 @@ export default function PassCode({
       ...(qr ? {} : { height: 22 }),
     });
   }, [value, qr]);
-  return (
+  const code = (
     <canvas className="pass-code" role="img" aria-label={label} ref={canvas} />
+  );
+  if (qr) return code;
+  return (
+    <div>
+      <button
+        type="button"
+        className="barcode-copy"
+        aria-label="Copy barcode ID"
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(value);
+            setFeedback("Barcode ID copied.");
+          } catch {
+            setFeedback("Clipboard unavailable. Barcode ID: " + value);
+          }
+        }}
+      >
+        {code}
+      </button>
+      <p role="status">{feedback || "Tap the barcode to copy your ID."}</p>
+    </div>
   );
 }
 

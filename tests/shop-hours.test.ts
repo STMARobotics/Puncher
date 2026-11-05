@@ -98,3 +98,29 @@ it("reuses an already rostered mentor's card and promotes their active visit wit
     creditedSeconds: 55,
   });
 });
+
+it("ends the kiosk at Chicago midnight and forfeits unfinished mentor and student visits", async () => {
+  const { app, db, set, openShop } = await fixture(new MemoryStore(), false);
+  set("2026-06-01T04:59:00.000Z");
+  const kiosk = await openShop();
+  const devicePrincipal = {
+    kind: "device" as const,
+    id: kiosk.sessionId,
+    roles: [],
+  };
+  expect(kiosk.expiresAt).toBe("2026-06-01T05:00:00.000Z");
+  await app.scan(devicePrincipal, "000123", uid());
+  set(kiosk.expiresAt);
+  await expect(app.scan(devicePrincipal, "000123", uid())).rejects.toThrow(
+    "Access disabled",
+  );
+  await app.cleanup();
+  const mentorCard = await db.get(key("CARD#" + kiosk.barcode));
+  for (const memberId of ["member-a", mentorCard!.memberId]) {
+    const [visit] = await all(db, "MEMBER#" + memberId, { prefix: "SHOP#" });
+    expect(visit).toMatchObject({
+      status: "forfeited_missing_checkout",
+      creditedSeconds: 0,
+    });
+  }
+});

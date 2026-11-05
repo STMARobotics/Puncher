@@ -88,13 +88,29 @@ else if (command === "bootstrap-admin") {
     roles: ["admin", "stats:staff"],
   };
   const app = new Puncher(db);
-  for (const [id, name, card] of [
-    ["11111111-1111-4111-8111-111111111111", "Alex Example", "000123"],
-    ["22222222-2222-4222-8222-222222222222", "Jordan Sample", "000456"],
+  for (const [id, name, card, email] of [
+    [
+      "11111111-1111-4111-8111-111111111111",
+      "Alex Example",
+      "000123",
+      "alex@stmarobotics.org",
+    ],
+    [
+      "22222222-2222-4222-8222-222222222222",
+      "Jordan Sample",
+      "000456",
+      "jordan@stmarobotics.org",
+    ],
   ])
     await app.saveMember(
       p,
-      { displayName: name, barcode: card, active: true, memberKind: "student" },
+      {
+        displayName: name,
+        email,
+        barcode: card,
+        active: true,
+        memberKind: "student",
+      },
       id,
     );
   await app.saveIdentity(p, {

@@ -7,6 +7,7 @@ export class ScanBuffer {
     readonly invalid: () => void,
     readonly options: {
       idleTimeoutMs?: number;
+      activate?: (code: string) => void;
       onChange?: (length: number) => void;
     } = {},
   ) {}
@@ -20,6 +21,8 @@ export class ScanBuffer {
       const card = this.value;
       this.clear();
       if (/^[0-9]{6}$/.test(card)) this.submit(card);
+      else if (this.options.activate && /^PUNCHER-[0-9A-F]{48}$/i.test(card))
+        this.options.activate(card.toUpperCase());
       else this.invalid();
       return;
     }
@@ -30,14 +33,18 @@ export class ScanBuffer {
     if (key === "Backspace") {
       this.value = this.selected ? "" : this.value.slice(0, -1);
       this.selected = false;
-      this.options.onChange?.(this.value.length);
+      this.options.onChange?.(
+        /^\d{1,6}$/.test(this.value) ? this.value.length : 0,
+      );
       return;
     }
     if (key.length === 1) {
       if (this.selected) this.value = "";
       this.selected = false;
-      this.value = (this.value + key).slice(-32);
-      this.options.onChange?.(this.value.length);
+      this.value = (this.value + key).slice(0, 80);
+      this.options.onChange?.(
+        /^\d{1,6}$/.test(this.value) ? this.value.length : 0,
+      );
     }
   }
   selectAll() {

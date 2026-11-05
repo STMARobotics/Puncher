@@ -121,12 +121,11 @@ test("CSV import and card replacement preserve canonical attendance on real Dyna
     mentor,
     uid(),
     "Member Name,Member Email,Member Role\nAlex Example,alex@stmarobotics.org,MEMBER\n",
+    "frc.students@stmarobotics.org",
   );
-  const before = await db.get(key("MEMBER#member-a"));
-  const selection = [{ memberId: "member-a", version: before!.v }];
   const batches = await Promise.all([
-    applyRosterBatch(db, mentor, job.importId, 0, selection),
-    applyRosterBatch(db, mentor, job.importId, 0, selection),
+    applyRosterBatch(db, mentor, job.importId, 0),
+    applyRosterBatch(db, mentor, job.importId, 0),
   ]);
   assert.equal(batches[0].status, "completed");
   assert.deepEqual(batches[0], batches[1]);

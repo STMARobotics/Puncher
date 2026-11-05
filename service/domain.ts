@@ -17,6 +17,7 @@ import {
   barcode,
   localDay,
   cutoff,
+  kioskExpiry,
   reportingYear,
   validDate,
   hoursToSeconds,
@@ -62,7 +63,8 @@ export class Puncher {
     assert(
       r &&
         (p.kind === "device"
-          ? r.enabled && r.expiresAt > this.clock().toISOString()
+          ? r.enabled &&
+            kioskExpiry(r.launchedAt, r.expiresAt) > this.clock().toISOString()
           : r.enabled),
       "Access disabled. Ask an administrator for setup.",
       403,
@@ -75,7 +77,7 @@ export class Puncher {
       );
       if (r.memberId) {
         const member = await tx.get(key(`MEMBER#${r.memberId}`));
-        assert(member?.active, "Member account is inactive.", 403);
+        assert(member?.active, "Attendance account is inactive.", 403);
       }
     } else {
       assert(
@@ -253,7 +255,7 @@ export class Puncher {
     );
     const payload = hash(JSON.stringify({ card }));
     return atomic(this.store, async (tx) => {
-      await this.livePrincipal(tx, p);
+      const device = await this.livePrincipal(tx, p);
       const opKey = key(`OP#${p.id}`, `SHOP#${operationId}`);
       const old = await tx.get(opKey);
       if (old) {
@@ -273,6 +275,11 @@ export class Puncher {
       const m = await this.cardMember(tx, card);
       assert(m, "This card is inactive or unavailable.", 403);
       const { day, shop, timestamp, now } = await this.readShopClock(tx);
+      assert(
+        kioskExpiry(device.launchedAt, device.expiresAt) > now,
+        "Kiosk session expired. Ask a mentor to activate it again.",
+        401,
+      );
       const { current, stale } = await this.currentVisit(tx, m.memberId, now);
       let cur = current;
       assert(
@@ -444,7 +451,7 @@ export class Puncher {
     const displayName = text(input.displayName, "Name", 100);
     assert(
       ["student", "mentor"].includes(input.memberKind),
-      "Invalid member kind.",
+      "Invalid attendance role.",
     );
     assert(typeof input.active === "boolean", "Active is required.");
     const requestedCard =
@@ -460,7 +467,7 @@ export class Puncher {
           input.email === undefined ||
           (typeof input.email === "string" &&
             input.email.trim().toLowerCase() === previous.csvEmail),
-        "For a CSV member email change, upload the new address and select the existing member to preserve their history.",
+        "This roster email is linked to Google sign-in. Ask an administrator to review the account.",
         409,
       );
       const card = await assignCard(tx, id, requestedCard ?? previous?.barcode);
@@ -518,13 +525,13 @@ export class Puncher {
       if (existing) {
         assert(
           existing.memberId === id,
-          "Operation belongs to another member.",
+          "Operation belongs to another roster entry.",
           409,
         );
         return existing.result;
       }
       const member = await tx.get(key("MEMBER#" + id));
-      assert(member, "Member not found.", 404);
+      assert(member, "Roster entry not found.", 404);
       if (member.barcode) {
         await assignCard(tx, id, member.barcode);
         await tx.del(key("CARD#" + member.barcode));
@@ -571,16 +578,16 @@ export class Puncher {
       const before = await tx.get(k);
       if (input.memberId) {
         const member = await tx.get(key(`MEMBER#${input.memberId}`));
-        assert(member, "Member not found.");
+        assert(member, "Roster entry not found.");
         assert(
           !member.directoryUserId || member.directoryUserId === sub,
-          "Member is linked to a different Google Directory account.",
+          "Roster entry is linked to a different Google Directory account.",
           409,
         );
         const claim = await tx.get(key(`BINDING#${input.memberId}`));
         assert(
           !claim || claim.googleSub === sub,
-          "Member is already linked to another identity.",
+          "Roster entry is already linked to another identity.",
           409,
         );
         await tx.put(
@@ -678,7 +685,7 @@ export class Puncher {
       (!binding || binding.googleSub === p.id) &&
         (!login || login.sub === p.id) &&
         (!member?.directoryUserId || member.directoryUserId === p.id),
-      "This attendance member is linked to another account. Ask an administrator to review it.",
+      "This attendance record is linked to another account. Ask an administrator to review it.",
       409,
     );
     assert(
@@ -816,9 +823,6 @@ export class Puncher {
     const [oldId, oldSecret] = (presented ?? "").split(".");
     const generatedId = uid(),
       secret = randomBytes(32).toString("base64url");
-    const expiresAt = new Date(
-      this.clock().getTime() + 12 * 3600000,
-    ).toISOString();
     const session = await atomic(this.store, async (tx) => {
       const identity = await this.livePrincipal(tx, p);
       if (activationKey) {
@@ -843,12 +847,19 @@ export class Puncher {
           : undefined;
       const expected = Buffer.from(previous?.secretHash ?? ""),
         actual = Buffer.from(hash(oldSecret ?? ""));
+      const now = await this.clockInLaunchingMentor(tx, p, identity);
       const resumed =
         !!previous &&
+        (!previous.launchedAt ||
+          localDay(new Date(previous.launchedAt)) ===
+            localDay(new Date(now))) &&
         expected.length === actual.length &&
         timingSafeEqual(expected, actual);
       const id = resumed ? oldId : generatedId;
-      const now = await this.clockInLaunchingMentor(tx, p, identity);
+      const expiresAt = kioskExpiry(
+        now,
+        new Date(Date.parse(now) + 12 * 3600000).toISOString(),
+      );
       await tx.put(
         row(`DEVICE#${id}`, "METADATA", {
           deviceId: id,
@@ -865,11 +876,10 @@ export class Puncher {
         }),
       );
       await this.audit(tx, p, "kiosk.launched", id, { resumed });
-      return { sessionId: id, resumed };
+      return { sessionId: id, resumed, expiresAt };
     });
     return {
       credential: `${session.sessionId}.${secret}`,
-      expiresAt,
       ...session,
     };
   }

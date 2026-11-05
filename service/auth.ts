@@ -1,7 +1,7 @@
 import { OAuth2Client, type TokenPayload } from "google-auth-library";
 import { timingSafeEqual } from "node:crypto";
 import { type Store } from "./store";
-import { type Principal, key, hash, assert, Fault } from "./model";
+import { type Principal, key, hash, assert, Fault, kioskExpiry } from "./model";
 import { runtime, store } from "./runtime";
 import { atomic } from "./store";
 import { row } from "./model";
@@ -122,7 +122,7 @@ export async function human(
       const member = await db.get(key("MEMBER#" + identity.memberId));
       assert(
         member?.active && member.memberKind === "student",
-        "Your member account is inactive.",
+        "Your attendance account is inactive.",
         403,
       );
       return {
@@ -161,7 +161,7 @@ export async function human(
             member?.active &&
             member.memberKind === "student" &&
             member.csvEmail === email,
-          "Your member account is inactive or changed.",
+          "Your attendance account is inactive or changed.",
           403,
         );
         const currentIdentity = await tx.get(key("IDENTITY#" + sub));
@@ -191,7 +191,7 @@ export async function human(
           login?.sub === sub &&
           (!binding || binding.googleSub === sub) &&
           (!member.directoryUserId || member.directoryUserId === sub),
-        "Your member account is inactive or changed.",
+        "Your attendance account is inactive or changed.",
         403,
       );
     }
@@ -211,12 +211,12 @@ export async function human(
   )
     assert(
       identity.memberId,
-      "Your identity needs an administrator-approved member link.",
+      "Your identity needs an administrator-approved roster link.",
       403,
     );
   if (identity.memberId) {
     const m = await db.get(key(`MEMBER#${identity.memberId}`));
-    assert(m?.active, "Your member account is inactive.", 403);
+    assert(m?.active, "Your attendance account is inactive.", 403);
   }
   return {
     kind: "human",
@@ -238,6 +238,7 @@ export async function device(
     401,
   );
   const d = await db.get(key(`DEVICE#${id}`));
+  const expiresAt = d && kioskExpiry(d.launchedAt, d.expiresAt);
   const actual = Buffer.from(hash(secret)),
     expected = Buffer.from(d?.secretHash || "");
   assert(
@@ -246,7 +247,8 @@ export async function device(
       d.launchedBy &&
       expected.length === actual.length &&
       timingSafeEqual(expected, actual) &&
-      d.expiresAt > new Date().toISOString(),
+      expiresAt &&
+      expiresAt > new Date().toISOString(),
     "Kiosk session expired or was ended. Ask a mentor to launch it again.",
     401,
   );
@@ -263,7 +265,7 @@ export async function device(
       "Mentor account is inactive.",
       401,
     );
-  return { kind: "device", id, roles: [] };
+  return { kind: "device", id, roles: [], expiresAt };
 }
 export function kioskCredential(headers: Record<string, string | undefined>) {
   const cookie = headers.cookie
