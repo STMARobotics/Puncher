@@ -4,7 +4,6 @@ export function runtime() {
   const local = process.env.APP_ENV === "local";
   const endpoint = process.env.DYNAMODB_ENDPOINT;
   const fixtures = process.env.LOCAL_AUTH_FIXTURES === "true";
-  const rosterLocalFixtures = process.env.LOCAL_ROSTER_FIXTURES === "true";
   if (endpoint) {
     const u = new URL(endpoint);
     assert(
@@ -17,12 +16,6 @@ export function runtime() {
     assert(
       local && !!endpoint && !process.env.AWS_LAMBDA_FUNCTION_NAME,
       "Development auth is forbidden outside DynamoDB Local.",
-      500,
-    );
-  if (rosterLocalFixtures)
-    assert(
-      local && fixtures && !!endpoint && !process.env.AWS_LAMBDA_FUNCTION_NAME,
-      "Roster fixtures are forbidden outside DynamoDB Local.",
       500,
     );
   assert(
@@ -41,7 +34,6 @@ export function runtime() {
   return {
     local,
     fixtures,
-    rosterLocalFixtures,
     endpoint,
     table: process.env.TABLE_NAME!,
     origin: process.env.ALLOWED_ORIGIN || "http://localhost:5173",
@@ -64,7 +56,5 @@ export function publicConfig() {
     timezone: "America/Chicago",
     statsUrl: c.statsUrl,
     localFixtures: c.fixtures,
-    rosterSyncAvailable:
-      !!process.env.ROSTER_SYNC_QUEUE_URL || c.rosterLocalFixtures,
   };
 }

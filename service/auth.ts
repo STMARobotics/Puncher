@@ -39,6 +39,7 @@ export async function human(
   )?.[1];
   let sub: string;
   let verifiedEmail: string | undefined, verifiedName: string | undefined;
+  let rosterEmail: string | undefined, rosterMemberId: string | undefined;
   if (
     c.fixtures &&
     bearer &&
@@ -80,6 +81,8 @@ export async function human(
       401,
     );
     sub = session.sub;
+    rosterEmail = session.rosterEmail;
+    rosterMemberId = session.rosterMemberId;
   }
   const identity = await db.get(key(`IDENTITY#${sub}`));
   if (
@@ -105,15 +108,102 @@ export async function human(
     });
   }
   assert(
-    identity?.enabled,
-    "Your mentor access is disabled or awaiting administrator setup.",
+    !identity || identity.enabled,
+    "Your Puncher access is disabled.",
     403,
   );
-  assert(
-    identity.roles?.some((r: string) => ["mentor", "admin"].includes(r)),
-    "Puncher sign-in is available to mentors only.",
-    403,
-  );
+  if (!identity?.roles?.some((r: string) => ["mentor", "admin"].includes(r))) {
+    if (
+      identity?.memberId &&
+      identity.roles?.some((r: string) =>
+        ["student", "stats:student"].includes(r),
+      )
+    ) {
+      const member = await db.get(key("MEMBER#" + identity.memberId));
+      assert(
+        member?.active && member.memberKind === "student",
+        "Your member account is inactive.",
+        403,
+      );
+      return {
+        kind: "human",
+        id: sub,
+        roles: ["student"],
+        memberId: member.memberId,
+      };
+    }
+    const email = verifiedEmail ?? rosterEmail;
+    assert(email, "Your account is awaiting administrator setup.", 403);
+    const claimKey = key("ROSTER_EMAIL#" + hash(email));
+    const claim = await db.get(claimKey);
+    assert(
+      claim &&
+        !claim.retired &&
+        (!rosterMemberId || rosterMemberId === claim.memberId),
+      "Your account is awaiting administrator setup. Ask a mentor to check the roster.",
+      403,
+    );
+    const memberId = claim.memberId as string;
+    const memberKey = key("MEMBER#" + memberId),
+      loginKey = key("ROSTER_LOGIN#" + memberId),
+      bindingKey = key("BINDING#" + memberId);
+    if (verifiedEmail) {
+      // The CSV suggests a match. Pin the first verified Google subject so
+      // a later reassignment of that email cannot inherit this member's card.
+      await atomic(db, async (tx) => {
+        const current = await tx.get(claimKey),
+          member = await tx.get(memberKey);
+        const login = await tx.get(loginKey),
+          binding = await tx.get(bindingKey);
+        assert(
+          current?.memberId === memberId &&
+            !current.retired &&
+            member?.active &&
+            member.memberKind === "student" &&
+            member.csvEmail === email,
+          "Your member account is inactive or changed.",
+          403,
+        );
+        const currentIdentity = await tx.get(key("IDENTITY#" + sub));
+        assert(
+          (!login || login.sub === sub) &&
+            (!binding || binding.googleSub === sub) &&
+            (!member.directoryUserId || member.directoryUserId === sub) &&
+            (!currentIdentity ||
+              (currentIdentity.enabled &&
+                (!currentIdentity.memberId ||
+                  currentIdentity.memberId === memberId))),
+          "Ask a mentor to review your account link.",
+          403,
+        );
+        if (!login) await tx.put(row(loginKey.pk, loginKey.sk, { sub }));
+      });
+    } else {
+      const [member, login, binding] = await Promise.all([
+        db.get(memberKey),
+        db.get(loginKey),
+        db.get(bindingKey),
+      ]);
+      assert(
+        member?.active &&
+          member.memberKind === "student" &&
+          member.csvEmail === email &&
+          login?.sub === sub &&
+          (!binding || binding.googleSub === sub) &&
+          (!member.directoryUserId || member.directoryUserId === sub),
+        "Your member account is inactive or changed.",
+        403,
+      );
+    }
+    return {
+      kind: "human",
+      id: sub,
+      roles: ["student"],
+      memberId,
+      rosterEmail: email,
+    };
+  }
+  assert(identity, "Your account is awaiting administrator setup.", 403);
   if (
     identity.roles?.some((r: string) =>
       ["student", "stats:student"].includes(r),
@@ -140,7 +230,7 @@ export async function device(
   db: Store,
 ): Promise<Principal> {
   const token = kioskCredential(headers);
-  assert(token, "A mentor must log in and launch this kiosk.", 401);
+  assert(token, "Scan a mentor's kiosk activation code.", 401);
   const [id, secret] = token.split(".");
   assert(
     id && secret && id.length <= 100 && secret.length <= 200,
@@ -202,7 +292,11 @@ export async function humanAuthorizer(event: any) {
       },
       store(),
     );
-    return { isAuthorized: true, context: { principalId: p.id } };
+    const allowed =
+      p.roles.includes("mentor") ||
+      p.roles.includes("admin") ||
+      event.routeKey?.endsWith(" /api/me");
+    return { isAuthorized: !!allowed, context: { principalId: p.id } };
   } catch {
     return { isAuthorized: false };
   }

@@ -13,6 +13,7 @@ export type Principal = {
   id: string;
   roles: string[];
   memberId?: string;
+  rosterEmail?: string;
 };
 export class Fault extends Error {
   constructor(

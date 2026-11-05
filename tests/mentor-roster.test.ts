@@ -3,14 +3,6 @@ import { MemoryStore, atomic, all } from "../service/store";
 import { key, row, uid } from "../service/model";
 import { Puncher } from "../service/domain";
 import { assignCard } from "../service/card-codes";
-import {
-  startRosterSync,
-  runRosterSync,
-  rosterStatus,
-  pendingRoster,
-  linkRosterMember,
-  type DirectoryPerson,
-} from "../service/roster";
 import { dispatch } from "../service/api";
 import { human, device as authenticateKiosk } from "../service/auth";
 import { fixture, admin, mentor } from "./helpers";
@@ -25,7 +17,6 @@ function env() {
     TABLE_NAME: "mentor-test",
     DYNAMODB_ENDPOINT: "http://127.0.0.1:8766",
     LOCAL_AUTH_FIXTURES: "true",
-    LOCAL_ROSTER_FIXTURES: "false",
     ALLOWED_ORIGIN: "http://localhost:5173",
     GOOGLE_CLIENT_ID: "test-client",
   });
@@ -35,192 +26,8 @@ const headers = (token = "local-mentor") => ({
   origin: "http://localhost:5173",
   "content-type": "application/json",
 });
-const person = (id: string, active = true): DirectoryPerson => ({
-  id,
-  active,
-  displayName: "Member " + id,
-  email: id + "@stmarobotics.org",
-});
-async function empty() {
-  const db = new MemoryStore({ orgId: "example-team" });
-  await atomic(db, async (tx) => {
-    for (const p of [admin, mentor])
-      await tx.put(
-        row("IDENTITY#" + p.id, "METADATA", { enabled: true, roles: p.roles }),
-      );
-  });
-  return db;
-}
-async function sync(db: MemoryStore, users: DirectoryPerson[]) {
-  const job = await startRosterSync(db, mentor, async () => {});
-  await runRosterSync(db, job.jobId, async () => structuredClone(users));
-  return rosterStatus(db);
-}
-it("provisions active directory members once with stable codes, without granting login or rewarding imports", async () => {
-  const db = await empty();
-  expect(
-    (await sync(db, [person("one"), person("two"), person("suspended", false)]))
-      .status,
-  ).toBe("completed");
-  const before = await all(db, "MEMBERS", { index: "GSI1" });
-  expect(before).toHaveLength(2);
-  expect(new Set(before.map((r) => r.barcode)).size).toBe(2);
-  for (const r of before) {
-    expect(r.barcode).toMatch(/^[1-9][0-9]{5}$/);
-    expect(r.active).toBe(true);
-  }
-  expect(await db.get(key("IDENTITY#one"))).toBeUndefined();
-  expect(
-    [...db.rows.values()].filter((r) => r.recordType === "ACTIVITY_OUTBOX_V1"),
-  ).toHaveLength(0);
-  const renamed = {
-    ...person("one"),
-    displayName: "Changed Name",
-    email: "renamed@stmarobotics.org",
-  };
-  await sync(db, [renamed, person("two")]);
-  const after = await all(db, "MEMBERS", { index: "GSI1" });
-  for (const r of after)
-    expect(r.barcode).toBe(
-      before.find((b) => b.memberId === r.memberId)?.barcode,
-    );
-  expect(after.find((r) => r.directoryUserId === "one")?.displayName).toBe(
-    "Changed Name",
-  );
-});
-it("preserves manual inactivity, follows confirmed suspensions and removals, and preserves history", async () => {
-  const db = await empty();
-  await sync(db, [person("one"), person("two")]);
-  const member = (await all(db, "MEMBERS", { index: "GSI1" })).find(
-    (r) => r.directoryUserId === "one",
-  )!;
-  await new Puncher(db).saveMember(
-    mentor,
-    { ...member, active: false },
-    member.memberId,
-  );
-  await sync(db, [person("one"), person("two", false)]);
-  expect((await db.get(key(member.pk)))?.active).toBe(false);
-  const two = (await all(db, "MEMBERS", { index: "GSI1" })).find(
-    (r) => r.directoryUserId === "two",
-  )!;
-  expect(two.active).toBe(false);
-  await sync(db, [person("one"), person("two")]);
-  expect((await db.get(key(two.pk)))?.active).toBe(true);
-  await sync(db, [person("one")]);
-  expect((await db.get(key(two.pk)))?.active).toBe(false);
-  expect((await db.get(key(two.pk)))?.barcode).toBe(two.barcode);
-});
-it("never deactivates members on a failed, malformed or empty directory response", async () => {
-  const db = await empty();
-  await sync(db, [person("one")]);
-  for (const source of [
-    async () => {
-      throw Error("do not log this credential");
-    },
-    async () => [],
-    async () => [person("one"), person("one")],
-  ]) {
-    const job = await startRosterSync(db, mentor, async () => {});
-    await runRosterSync(db, job.jobId, source);
-    expect((await rosterStatus(db)).status).toBe("failed");
-    expect((await all(db, "MEMBERS", { index: "GSI1" }))[0].active).toBe(true);
-  }
-});
-it("does not match names; explicit legacy linking preserves the original member, card and Google-independent hours", async () => {
-  const { db, app, advance } = await fixture();
-  await app.scan(
-    { kind: "device", id: "test-device", roles: [] },
-    "000123",
-    uid(),
-  );
-  advance(60);
-  await app.scan(
-    { kind: "device", id: "test-device", roles: [] },
-    "000123",
-    uid(),
-  );
-  const before = await all(db, "MEMBER#member-a", { prefix: "SHOP#" });
-  const job = await startRosterSync(db, mentor, async () => {});
-  await runRosterSync(db, job.jobId, async () => [
-    { ...person("google-one"), displayName: "Alex Example" },
-  ]);
-  expect(await pendingRoster(db)).toHaveLength(1);
-  expect(await all(db, "MEMBERS", { index: "GSI1" })).toHaveLength(2);
-  await linkRosterMember(db, mentor, "google-one", "member-a");
-  expect((await db.get(key("MEMBER#member-a")))?.barcode).toBe("000123");
-  expect(await all(db, "MEMBER#member-a", { prefix: "SHOP#" })).toEqual(before);
-  expect(await pendingRoster(db)).toHaveLength(0);
-});
-it("uses an existing explicit identity binding but never grants mentor access to new roster members", async () => {
-  const { db } = await fixture();
-  await atomic(db, async (tx) => {
-    await tx.put(
-      row("IDENTITY#verified-account", "METADATA", {
-        memberId: "member-a",
-        enabled: true,
-        roles: ["student", "stats:student"],
-      }),
-    );
-  });
-  const job = await startRosterSync(db, mentor, async () => {});
-  await runRosterSync(db, job.jobId, async () => [person("verified-account")]);
-  expect((await db.get(key("DIRECTORY#verified-account")))?.memberId).toBe(
-    "member-a",
-  );
-  expect((await db.get(key("IDENTITY#verified-account")))?.roles).toEqual([
-    "student",
-    "stats:student",
-  ]);
-  await expect(
-    new Puncher(db).saveIdentity(admin, {
-      googleSub: "different-google-user",
-      email: "different@stmarobotics.org",
-      enabled: true,
-      roles: ["stats:student"],
-      memberId: "member-a",
-    }),
-  ).rejects.toThrow("Directory account");
-});
-it("deduplicates queued sync requests and ignores obsolete/duplicate worker deliveries", async () => {
-  const db = await empty(),
-    enqueued: string[] = [];
-  const jobs = await Promise.all([
-    startRosterSync(db, mentor, async (id) => {
-      enqueued.push(id);
-    }),
-    startRosterSync(db, mentor, async (id) => {
-      enqueued.push(id);
-    }),
-  ]);
-  expect(jobs[0].jobId).toBe(jobs[1].jobId);
-  expect(new Set(enqueued).size).toBe(1);
-  await runRosterSync(db, "obsolete", async () => {
-    throw Error("should not fetch");
-  });
-  await runRosterSync(db, jobs[0].jobId, async () => [person("one")]);
-  await runRosterSync(db, jobs[0].jobId, async () => {
-    throw Error("completed job should not refetch");
-  });
-  expect((await rosterStatus(db)).status).toBe("completed");
-});
-it("only one concurrent delivery can claim the roster job", async () => {
-  const db = await empty(),
-    job = await startRosterSync(db, mentor, async () => {});
-  let calls = 0;
-  await Promise.all(
-    [1, 2].map(() =>
-      runRosterSync(db, job.jobId, async () => {
-        calls++;
-        return [person("one")];
-      }),
-    ),
-  );
-  expect(calls).toBe(1);
-  expect((await rosterStatus(db)).status).toBe("completed");
-});
 it("reserves retired codes permanently and collision-checks allocations", async () => {
-  const db = await empty();
+  const { db } = await fixture();
   await atomic(db, async (tx) => {
     await assignCard(tx, "old-member", "123456");
     await tx.del(key("CARD#123456"));
@@ -276,7 +83,7 @@ it("mentor approval preserves existing Stats access and member linkage", async (
     enabled: true,
   });
 });
-it("allows mentors to manage basic members but not permissions, and denies student Puncher sign-in", async () => {
+it("allows mentors to manage basic members but not permissions, and limits student sign-in to their own barcode", async () => {
   env();
   const { db } = await fixture();
   await atomic(db, async (tx) => {
@@ -295,7 +102,7 @@ it("allows mentors to manage basic members but not permissions, and denies stude
         db,
       )
     ).statusCode,
-  ).toBe(403);
+  ).toBe(200);
   expect(
     (
       await dispatch(
@@ -319,7 +126,7 @@ it("allows mentors to manage basic members but not permissions, and denies stude
         db,
       )
     ).statusCode,
-  ).toBe(503);
+  ).toBe(410);
 });
 it("captures verified mentor access requests without granting permissions; only an administrator approves", async () => {
   env();
@@ -374,18 +181,38 @@ it("captures verified mentor access requests without granting permissions; only 
       .roles,
   ).toEqual(["mentor"]);
 });
-it("launches an isolated kiosk via mentor login, renews the same retry identity, rotates its secret and ends access", async () => {
-  env();
-  const { db } = await fixture();
-  const first = await dispatch(
+async function activate(
+  db: Awaited<ReturnType<typeof fixture>>["db"],
+  cookie?: string,
+) {
+  const issued = await dispatch(
     {
       method: "POST",
-      path: "/api/mentor/kiosk/launch",
+      path: "/api/mentor/kiosk/activation",
       headers: headers(),
       body: {},
     },
     db,
   );
+  expect(issued.statusCode).toBe(201);
+  return dispatch(
+    {
+      method: "POST",
+      path: "/api/kiosk/activate",
+      headers: {
+        origin: "http://localhost:5173",
+        "content-type": "application/json",
+        cookie,
+      },
+      body: { code: JSON.parse(issued.body).code },
+    },
+    db,
+  );
+}
+it("launches an isolated kiosk via mentor login, renews the same retry identity, rotates its secret and ends access", async () => {
+  env();
+  const { db } = await fixture();
+  const first = await activate(db);
   expect(first.statusCode).toBe(200);
   expect([first.headers["set-cookie"]].flat().join(";")).toContain("HttpOnly");
   expect(first.body).not.toContain("credential");
@@ -406,15 +233,7 @@ it("launches an isolated kiosk via mentor login, renews the same retry identity,
       db,
     );
   expect(JSON.parse((await scan()).body).state).toBe("in");
-  const renewed = await dispatch(
-    {
-      method: "POST",
-      path: "/api/mentor/kiosk/launch",
-      headers: { ...headers(), cookie },
-      body: {},
-    },
-    db,
-  );
+  const renewed = await activate(db, cookie);
   expect(JSON.parse(renewed.body).sessionId).toBe(session.sessionId);
   expect(JSON.parse(renewed.body).resumed).toBe(true);
   const nextCookie = [renewed.headers["set-cookie"]]
@@ -476,15 +295,7 @@ it("launches an isolated kiosk via mentor login, renews the same retry identity,
 it("immediately rejects kiosk sessions whose launching mentor loses access", async () => {
   env();
   const { db } = await fixture();
-  const launch = await dispatch(
-    {
-      method: "POST",
-      path: "/api/mentor/kiosk/launch",
-      headers: headers(),
-      body: {},
-    },
-    db,
-  );
+  const launch = await activate(db);
   const cookie = [launch.headers["set-cookie"]]
     .flat()
     .find((value) => value.startsWith("puncher-local-device="))!
@@ -494,4 +305,27 @@ it("immediately rejects kiosk sessions whose launching mentor loses access", asy
     await tx.put({ ...r!, roles: [] });
   });
   await expect(authenticateKiosk({ cookie }, db)).rejects.toThrow("mentor");
+});
+
+it("accepts a kiosk QR once and checks expiry and the issuing mentor's current access", async () => {
+  const { app, db, advance } = await fixture();
+  const issued = await app.issueKioskActivation(mentor);
+  const results = await Promise.allSettled([
+    app.activateKiosk(issued.code),
+    app.activateKiosk(issued.code),
+  ]);
+  const accepted = results.filter((result) => result.status === "fulfilled");
+  expect(accepted).toHaveLength(1);
+  expect(
+    await db.get(key("DEVICE#" + accepted[0].value.sessionId)),
+  ).toMatchObject({ launchedBy: mentor.id, launchedAt: expect.any(String) });
+  const expiring = await app.issueKioskActivation(mentor);
+  advance(121);
+  await expect(app.activateKiosk(expiring.code)).rejects.toThrow("expired");
+  const revoked = await app.issueKioskActivation(mentor);
+  await atomic(db, async (tx) => {
+    const identity = await tx.get(key("IDENTITY#" + mentor.id));
+    await tx.put({ ...identity!, enabled: false });
+  });
+  await expect(app.activateKiosk(revoked.code)).rejects.toThrow("disabled");
 });

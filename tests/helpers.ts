@@ -16,13 +16,17 @@ export const device: Principal = {
   id: "test-device",
   roles: [],
 };
-export async function fixture(db: Store = new MemoryStore()) {
+export async function fixture(db: Store = new MemoryStore(), open = true) {
   let now = new Date("2026-05-31T18:00:00.000Z");
   const app = new Puncher(db, () => now);
   await atomic(db, async (tx) => {
     for (const p of [admin, mentor])
       await tx.put(
-        row(`IDENTITY#${p.id}`, "METADATA", { enabled: true, roles: p.roles }),
+        row(`IDENTITY#${p.id}`, "METADATA", {
+          enabled: true,
+          roles: p.roles,
+          displayName: p === mentor ? "Taylor Mentor" : "Casey Admin",
+        }),
       );
     await tx.put(
       row("DEVICE#test-device", "METADATA", {
@@ -54,9 +58,16 @@ export async function fixture(db: Store = new MemoryStore()) {
     },
     "member-b",
   );
+  const openShop = async (person = mentor) => {
+    const pass = await app.issueKioskActivation(person);
+    const kiosk = await app.activateKiosk(pass.code);
+    return { ...pass, ...kiosk };
+  };
+  if (open) await openShop();
   return {
     db,
     app,
+    openShop,
     advance: (seconds: number) => {
       now = new Date(now.getTime() + seconds * 1000);
     },

@@ -1,6 +1,6 @@
 # ARCHITECTURE
 
-The current mentor-only workflow, manual asynchronous roster sync and scoped kiosk sessions are described in [mentor roster architecture](mentor-roster.md). Internal Staff/API_SCOPE and stats:staff names are retained for deployed-resource and Stats compatibility; public Puncher terminology is mentor.
+The current student phone barcodes, reviewed roster CSV imports and mentor QR activation are described in [mentor roster architecture](mentor-roster.md). Internal Staff/API_SCOPE and stats:staff names are retained for deployed-resource and Stats compatibility; public Puncher terminology is mentor.
 
 Puncher uses React/Vite, TypeScript, Node 24 Lambda, DynamoDB and TypeScript CDK. One language makes domain rules, UI DTOs and infrastructure approachable for students; React introduces a second frontend convention alongside the team's Angular app but avoids a large component framework. Plain accessible controls and CSS keep maintenance small. Business rules live in service/domain.ts, persistence in service/store.ts, and the same HTTP dispatcher serves Lambda and the local Node adapter.
 

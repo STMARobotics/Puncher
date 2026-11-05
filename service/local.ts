@@ -1,16 +1,13 @@
 import { createServer } from "node:http";
 import { dispatch } from "./api";
-import { runtime, store } from "./runtime";
-import { runRosterSync } from "./roster";
-import { localDirectory } from "./local-roster-fixtures";
-const config = runtime(),
-  db = store();
+import { store } from "./runtime";
+const db = store();
 createServer(async (req, res) => {
   try {
     let body = "";
     for await (const chunk of req) {
       body += chunk;
-      if (body.length > 32000) {
+      if (Buffer.byteLength(body, "utf8") > 512 * 1024) {
         res.writeHead(413);
         res.end();
         return;
@@ -39,21 +36,6 @@ createServer(async (req, res) => {
         query: Object.fromEntries(url.searchParams),
       },
       db,
-      config.rosterLocalFixtures
-        ? {
-            enqueueRoster: async (jobId) => {
-              setTimeout(() => {
-                void runRosterSync(db, jobId, async () =>
-                  structuredClone(localDirectory),
-                ).catch(() =>
-                  console.error(
-                    "Synthetic roster delivery failed; retry from the mentor console.",
-                  ),
-                );
-              }, 0);
-            },
-          }
-        : {},
     );
     res.writeHead(result.statusCode, result.headers);
     res.end(result.body);

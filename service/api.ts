@@ -8,19 +8,17 @@ import {
   sessionCookieName,
 } from "./auth";
 import {
-  startRosterSync,
-  rosterStatus,
-  pendingRoster,
-  linkRosterMember,
-} from "./roster";
-import { enqueueRosterSync } from "./roster-queue";
+  previewRoster,
+  rosterImportStatus,
+  applyRosterBatch,
+} from "./roster-import";
 import { store, runtime, publicConfig } from "./runtime";
 import { all, atomic, type Store } from "./store";
 import { Fault, assert, admin, mentor, owns, key, hash } from "./model";
 import {
-  beginOAuth,
+  beginGoogleSignIn,
   endSession,
-  finishOAuth,
+  finishGoogleSignIn,
   clearedSessionCookies,
 } from "./session";
 export type Request = {
@@ -44,11 +42,7 @@ const response = (
   } as Record<string, string | string[]>,
   body: JSON.stringify(body),
 });
-export async function dispatch(
-  req: Request,
-  db: Store = store(),
-  dependencies: { enqueueRoster?: (id: string) => Promise<void> } = {},
-) {
+export async function dispatch(req: Request, db: Store = store()) {
   try {
     const c = runtime();
     const cooldown = Number(process.env.SCAN_COOLDOWN_SECONDS || 5);
@@ -61,13 +55,14 @@ export async function dispatch(
     const { method, path, headers } = req;
     if (process.env.API_SCOPE === "kiosk")
       assert(
-        path.startsWith("/api/kiosk/") || path === "/api/health",
+        (path.startsWith("/api/kiosk/") && path !== "/api/kiosk/activate") ||
+          path === "/api/health",
         "Device route unavailable.",
         403,
       );
     if (process.env.API_SCOPE === "staff")
       assert(
-        !path.startsWith("/api/kiosk/"),
+        !path.startsWith("/api/kiosk/") || path === "/api/kiosk/activate",
         "Mentor credentials do not authorize kiosk routes.",
         403,
       );
@@ -88,9 +83,10 @@ export async function dispatch(
       );
       return response(200, { status: "ok", schemaVersion: 1 });
     }
-    if (method === "GET" && path === "/api/auth/login") return beginOAuth(db);
+    if (method === "GET" && path === "/api/auth/login")
+      return beginGoogleSignIn(db);
     if (method === "GET" && path === "/api/auth/callback")
-      return finishOAuth(req.query || {}, headers, db);
+      return finishGoogleSignIn(req.query || {}, headers, db);
     if (method !== "GET") {
       assert(
         headers.origin === c.origin,
@@ -107,8 +103,7 @@ export async function dispatch(
       return endSession(headers, db);
     if (path === "/api/kiosk/setup" && method === "POST") {
       return response(410, {
-        message:
-          "Log in as a mentor and use Launch kiosk. Manual device setup has been retired.",
+        message: "Start the kiosk and scan a mentor's activation code.",
       });
     }
     if (path === "/api/kiosk/end" && method === "POST") {
@@ -130,6 +125,28 @@ export async function dispatch(
         200,
         { ended: true },
         { "set-cookie": kioskCookie("", 0) },
+      );
+    }
+    if (path === "/api/kiosk/activate" && method === "POST") {
+      const session = await app.activateKiosk(
+        b.code,
+        kioskCredential(headers),
+        cookieValue(headers, sessionCookieName(c.local)),
+      );
+      return response(
+        200,
+        {
+          ready: true,
+          sessionId: session.sessionId,
+          resumed: session.resumed,
+          expiresAt: session.expiresAt,
+        },
+        {
+          "set-cookie": [
+            kioskCookie(session.credential, 30 * 86400),
+            ...clearedSessionCookies(c.local),
+          ],
+        },
       );
     }
     if (path.startsWith("/api/kiosk/")) {
@@ -165,33 +182,29 @@ export async function dispatch(
       throw new Fault(404, "Route not found.");
     }
     const p = await human(headers, db);
-    if (path === "/api/me" && method === "GET") return response(200, p);
-    mentor(p);
-    if (path === "/api/mentor/kiosk/launch" && method === "POST") {
-      const session = await app.launchKiosk(
-        p,
-        kioskCredential(headers),
-        "Shop kiosk",
-        cookieValue(headers, sessionCookieName(c.local)),
-      );
-      return response(
-        200,
-        {
-          ready: true,
-          sessionId: session.sessionId,
-          resumed: session.resumed,
-          expiresAt: session.expiresAt,
-        },
-        // Keep the renewal credential for 30 days; server-side authorization
-        // still expires after 12h and renewal always requires mentor sign-in.
-        {
-          "set-cookie": [
-            kioskCookie(session.credential, 30 * 86400),
-            ...clearedSessionCookies(c.local),
-          ],
-        },
-      );
+    if (path === "/api/me" && method === "GET") {
+      const student = p.roles.length === 1 && p.roles[0] === "student";
+      const member = p.memberId
+        ? await db.get(key("MEMBER#" + p.memberId))
+        : undefined;
+      if (student)
+        assert(
+          member?.active &&
+            member.memberKind === "student" &&
+            /^[0-9]{6}$/.test(member.barcode),
+          "Ask a mentor to assign your attendance card.",
+          403,
+        );
+      return response(200, {
+        id: p.id,
+        roles: p.roles,
+        memberId: p.memberId,
+        ...(member?.active ? { barcode: member.barcode } : {}),
+      });
     }
+    mentor(p);
+    if (path === "/api/mentor/kiosk/activation" && method === "POST")
+      return response(201, await app.issueKioskActivation(p));
     if (path === "/api/mentor/kiosks" && method === "GET")
       return response(
         200,
@@ -212,35 +225,22 @@ export async function dispatch(
     const sessionToEnd = path.match(/^\/api\/mentor\/kiosks\/([^/]+)$/);
     if (sessionToEnd && method === "DELETE")
       return response(200, await app.revokeDevice(p, sessionToEnd[1]));
-    if (path === "/api/mentor/roster/sync" && method === "POST") {
-      assert(
-        publicConfig().rosterSyncAvailable,
-        "Google roster sync needs one-time Google Workspace administrator setup.",
-        503,
-      );
-      return response(
-        202,
-        await startRosterSync(
-          db,
-          p,
-          dependencies.enqueueRoster ?? enqueueRosterSync,
-        ),
-      );
-    }
-    if (path === "/api/mentor/roster/status" && method === "GET")
-      return response(200, await rosterStatus(db));
-    if (path === "/api/mentor/roster/pending" && method === "GET")
-      return response(200, await pendingRoster(db));
-    if (path === "/api/mentor/roster/link" && method === "POST")
+    if (path === "/api/mentor/roster/imports" && method === "POST")
+      return response(201, await previewRoster(db, p, b.importId, b.csv));
+    const csvImport = path.match(
+      /^\/api\/mentor\/roster\/imports\/([^/]+)(?:\/(apply))?$/,
+    );
+    if (csvImport && method === "GET" && !csvImport[2])
+      return response(200, await rosterImportStatus(db, p, csvImport[1]));
+    if (csvImport && method === "POST" && csvImport[2])
       return response(
         200,
-        await linkRosterMember(
-          db,
-          p,
-          b.directoryId,
-          b.memberId,
-          b.createNew === true,
-        ),
+        await applyRosterBatch(db, p, csvImport[1], b.cursor, b.selections),
+      );
+    if (path.startsWith("/api/mentor/roster/"))
+      throw new Fault(
+        410,
+        "Use Upload members CSV in mentor tools. Google directory sync has been retired.",
       );
     if (path === "/api/mentor/members" && method === "GET")
       return response(
@@ -253,8 +253,8 @@ export async function dispatch(
             active,
             memberKind,
             barcode,
-            directoryUserId,
-            directorySuspended,
+            csvEmail,
+            v,
           }) => ({
             memberId,
             displayName,
@@ -262,8 +262,8 @@ export async function dispatch(
             active,
             memberKind,
             barcode,
-            directoryManaged: !!directoryUserId,
-            directorySuspended,
+            csvManaged: !!csvEmail,
+            version: v,
           }),
         ),
       );

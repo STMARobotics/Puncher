@@ -1,6 +1,6 @@
 # API AND OPERATIONS
 
-All browser writes send JSON and the exact configured Origin. Human routes use a seven-day, server-side DynamoDB session referenced by a Secure, HttpOnly, SameSite=Lax cookie; the raw session value is never stored in DynamoDB. Google authorization-code flow uses state, nonce and PKCE. The callback validates Google's signed ID token before creating the session. Kiosk routes use a separate mentor-launched HttpOnly session cookie. Launching the kiosk revokes and clears the current human session. Students cannot sign into Puncher. No ordinary human password exists. Lambda authorizers have zero cache TTL; handlers recheck enabled identities, roles, membership and event ownership. Student role alone grants no operational API access.
+All browser writes send JSON and the exact configured Origin. Human routes use a seven-day, server-side DynamoDB session referenced by a Secure, HttpOnly, SameSite=Lax cookie; the raw session value is never stored in DynamoDB. Google authorization-code flow uses state, nonce and PKCE. The callback validates Google's signed ID token before creating the session. Kiosk routes use a separate mentor-launched HttpOnly session cookie. Activation consumes a mentor-issued token and clears any human session in the kiosk browser. An eligible member signs in to retrieve their own attendance barcode. No ordinary human password exists. Lambda authorizers have zero cache TTL; handlers recheck enabled identities, roles, membership and event ownership. Student role alone grants no operational API access.
 
 | Method | Path | Authorization / behavior |
 | --- | --- | --- |
@@ -8,18 +8,18 @@ All browser writes send JSON and the exact configured Origin. Human routes use a
 | GET | /api/auth/login | Starts Google OIDC authorization-code flow |
 | GET | /api/auth/callback | Validates one-time OAuth state/code, creates session and redirects |
 | POST | /api/auth/logout | Origin-checked session revocation and cookie clearing |
-| GET | /api/me | Verified mapped human; role/setup DTO |
-| POST | /api/mentor/kiosk/launch | Mentor; creates/renews scoped HttpOnly kiosk session, no secret in JSON |
+| GET | /api/me | Verified human session. Students receive their own active attendance barcode. |
+| POST | /api/mentor/kiosk/activation | Mentor. Issues a single-use activation code valid for two minutes. |
+| POST | /api/kiosk/activate | Accepts a scanned code with same-origin JSON. Consumes the token and sets the scoped kiosk cookie. |
 | GET | /api/mentor/kiosks | Mentor's sessions; administrator sees all |
 | DELETE | /api/mentor/kiosks/{sessionId} | Launching mentor or administrator; immediate revocation |
 | POST | /api/kiosk/end | Exact Origin and JSON; ends current session and clears cookie |
 | GET / POST | /api/mentor/members | Mentor; safe roster / create with automatic code and optional client-generated memberId UUID for retries |
 | PATCH | /api/mentor/members/{memberId} | Mentor; edit attendance member without changing native ID |
 | POST | /api/mentor/members/{memberId}/replace-card | Mentor; operationId UUID makes replacement idempotent |
-| POST | /api/mentor/roster/sync | Mentor; 202 durable background job; requires configured connection |
-| GET | /api/mentor/roster/status | Mentor; job status/counts |
-| GET | /api/mentor/roster/pending | Mentor; unresolved directory candidates |
-| POST | /api/mentor/roster/link | Mentor; explicit existing member or confirmed new member |
+| POST | /api/mentor/roster/imports | Mentor. Validate CSV and stage preview with `{importId,csv}`. |
+| GET | /api/mentor/roster/imports/{importId} | Uploading mentor. Preview, selected matches and progress. |
+| POST | /api/mentor/roster/imports/{importId}/apply | Uploading mentor. Apply a batch with cursor and the initial reviewed selections. Retries return saved progress. |
 | GET | /api/admin/mentor-requests | Administrator; verified Google login requests |
 | POST | /api/admin/mentor-requests/{subject}/approve | Administrator; grants mentor plus explicitly selected extra permissions |
 | GET | /api/kiosk/status | Kiosk session availability |

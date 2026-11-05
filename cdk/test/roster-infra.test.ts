@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { BackendStack } from "../lib/backend-stack";
 import { config } from "../lib/config";
 
-it("isolates the opt-in manual roster worker and keeps mentor launch behind human auth", () => {
+it("uses CSV imports without a Directory worker or credentials and keeps mentor launch authorized", () => {
   const secret =
     "arn:aws:secretsmanager:us-east-2:111111111111:secret:google-roster-ABCdef";
   const app = new App({
@@ -28,34 +28,14 @@ it("isolates the opt-in manual roster worker and keeps mentor launch behind huma
   const functions = Object.values(
     t.findResources("AWS::Lambda::Function"),
   ) as any[];
-  const worker = functions.find(
-    (r) => r.Properties.FunctionName === "puncher-rostersync",
+  expect(
+    functions.some((r) => r.Properties.FunctionName === "puncher-rostersync"),
+  ).toBe(false);
+  expect(JSON.stringify(t.toJSON())).not.toContain("GOOGLE_ROSTER_SECRET_ARN");
+  expect(JSON.stringify(t.toJSON())).not.toContain(
+    "secretsmanager:GetSecretValue",
   );
-  expect(worker.Properties).toMatchObject({
-    Timeout: 300,
-    ReservedConcurrentExecutions: 1,
-  });
-  for (const fn of functions.filter((r) => r !== worker))
-    expect(
-      fn.Properties.Environment.Variables.GOOGLE_ROSTER_SECRET_ARN,
-    ).toBeUndefined();
   const policies = Object.entries(t.findResources("AWS::IAM::Policy"));
-  for (const [id, resource] of policies) {
-    const statements = (resource as any).Properties.PolicyDocument.Statement;
-    for (const statement of statements)
-      if (
-        JSON.stringify(statement.Action).includes(
-          "secretsmanager:GetSecretValue",
-        )
-      ) {
-        expect(id).toMatch(/^RosterSync/);
-        expect(statement.Resource).toBe(secret);
-      }
-  }
-  const workerPolicy: any = policies.find(([id]) =>
-    id.startsWith("RosterSyncServiceRoleDefaultPolicy"),
-  )?.[1];
-  expect(workerPolicy).toBeDefined();
   const totalsPolicy: any = policies.find(([id]) =>
     id.startsWith("ShopTotalsServiceRoleDefaultPolicy"),
   )?.[1];
@@ -68,14 +48,9 @@ it("isolates the opt-in manual roster worker and keeps mentor launch behind huma
         ]?.includes("IDENTITY#*"),
     ),
   ).toBe(true);
-  for (const statement of workerPolicy.Properties.PolicyDocument.Statement)
-    if (JSON.stringify(statement.Action).includes("dynamodb:PutItem"))
-      expect(
-        statement.Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"],
-      ).not.toContain("IDENTITY#*");
   const queues = Object.values(t.findResources("AWS::SQS::Queue")) as any[];
-  expect(queues.filter((r) => r.Properties.FifoQueue)).toHaveLength(2);
-  t.resourceCountIs("AWS::Lambda::EventSourceMapping", 1);
+  expect(queues.filter((r) => r.Properties.FifoQueue)).toHaveLength(0);
+  t.resourceCountIs("AWS::Lambda::EventSourceMapping", 0);
   t.resourceCountIs("AWS::Scheduler::Schedule", 1); // existing midnight cleanup only
   const routes = Object.values(
     t.findResources("AWS::ApiGatewayV2::Route"),

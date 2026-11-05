@@ -8,7 +8,6 @@ await build({
     resolve(projectRoot, "service/auth.ts"),
     resolve(projectRoot, "service/cleanup.ts"),
     resolve(projectRoot, "service/shop-totals.ts"),
-    resolve(projectRoot, "service/roster-worker.ts"),
   ],
   outdir: resolve(projectRoot, "dist/service"),
   platform: "node",

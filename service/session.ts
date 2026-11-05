@@ -73,7 +73,7 @@ async function clientSecret() {
   return cachedSecret;
 }
 
-export async function beginOAuth(db: Store): Promise<HttpResult> {
+export async function beginGoogleSignIn(db: Store): Promise<HttpResult> {
   const c = runtime();
   assert(c.googleClientId, "Google sign-in is not configured.", 503);
   const state = randomBytes(32).toString("base64url");
@@ -115,7 +115,7 @@ type OAuthOptions = {
   now?: () => Date;
 };
 
-export async function finishOAuth(
+export async function finishGoogleSignIn(
   query: Record<string, string | undefined>,
   headers: Record<string, string | undefined>,
   db: Store,
@@ -185,7 +185,7 @@ export async function finishOAuth(
       "Google sign-in could not be verified. Please try again.",
       401,
     );
-    await human(
+    const principal = await human(
       { authorization: `Bearer ${tokens.id_token}` },
       db,
       async () => payload,
@@ -197,6 +197,12 @@ export async function finishOAuth(
       await tx.put(
         row(`SESSION#${hash(sessionToken)}`, "METADATA", {
           sub: payload.sub,
+          ...(principal.rosterEmail
+            ? {
+                rosterEmail: principal.rosterEmail,
+                rosterMemberId: principal.memberId,
+              }
+            : {}),
           expiresAt: expires.toISOString(),
           ttl: Math.floor(expires.getTime() / 1000),
         }),

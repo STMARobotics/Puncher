@@ -1,5 +1,17 @@
 # VERIFICATION RECORD
 
+## Phone attendance and kiosk QR activation · November 5, 2026
+
+Build and synthesis passed with 76 unit and infrastructure tests. Ten DynamoDB Local tests passed, including consuming an activation code and exchanging the kiosk browser's session atomically. Tests cover verified roster email linkage, subject pinning, inactive accounts, mentor revocation, token expiry and concurrent attempts to redeem a token.
+
+The Chromium flow uses separate mentor, kiosk and student browser sessions. It decodes both rendered images and sends the decoded values as keyboard scanner input. The student clocks in and out using the existing six-digit code. Physical scanner acceptance on phone screens remains to be checked. The shared activity contract check passed.
+
+## Google group roster CSV · November 5, 2026
+
+Validated the supplied export format with all 19 member rows. The parser accepts the Google group headings, quoted names, a UTF-8 BOM and standard line endings. Repository tests use synthetic members.
+
+The build, synthesis and 74 unit and infrastructure tests passed. Ten DynamoDB Local tests passed, including concurrent import retries and preservation of the original member and attendance history. All 19 Chromium scenarios passed. The two CSV scenarios also passed after the final import handling adjustment. They cover preview and explicit linking, repeat import, card data export, and resuming a committed batch after a dropped response and page reload. Shared activity contract hashes and Pipe round trips passed.
+
 ## CI fixture environment correction · November 4, 2026
 
 The hosted check exposed a job-wide `LOCAL_ROSTER_FIXTURES=true` setting conflicting with authentication/session tests that deliberately disable local auth. The runtime correctly rejected this unsafe combination. Reproduced the same eight failures locally with the inherited CI flags; the prior local validation did not inherit the roster flag. The workflow now enables the synthetic directory only for the browser-test step, and the three authentication-related test suites explicitly disable roster fixtures in their own environment setup. Production runtime guards are unchanged and their existing test now also verifies that roster fixtures require local auth fixtures.
