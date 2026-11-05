@@ -1,6 +1,6 @@
 # API AND OPERATIONS
 
-All browser writes send JSON and the exact configured Origin. Human routes use a seven-day, server-side DynamoDB session referenced by a Secure, HttpOnly, SameSite=Lax cookie; the raw session value is never stored in DynamoDB. Google authorization-code flow uses state, nonce and PKCE. The callback validates Google's signed ID token before creating the session. Kiosk routes use a separate mentor-launched HttpOnly session cookie. Activation consumes a mentor-issued token and clears any human session in the kiosk browser. An eligible member signs in to retrieve their own attendance barcode. No ordinary human password exists. Lambda authorizers have zero cache TTL; handlers recheck enabled identities, roles, membership and event ownership. Student role alone grants no operational API access.
+All browser writes send JSON and the exact configured Origin. Human routes use a seven-day, server-side DynamoDB session referenced by a Secure, HttpOnly, SameSite=Lax cookie; the raw session value is never stored in DynamoDB. Google authorization-code flow uses state, nonce and PKCE. The callback validates Google's signed ID token before creating the session. Kiosk routes use a separate mentor-launched HttpOnly session cookie. Activation consumes a mentor-issued token and clears any human session in the kiosk browser. An eligible student signs in to retrieve their own attendance barcode. No ordinary human password exists. Lambda authorizers have zero cache TTL; handlers recheck enabled identities, roles, membership and event ownership. Student role alone grants no operational API access.
 
 | Method | Path | Authorization / behavior |
 | --- | --- | --- |
@@ -15,16 +15,16 @@ All browser writes send JSON and the exact configured Origin. Human routes use a
 | DELETE | /api/mentor/kiosks/{sessionId} | Launching mentor or administrator; immediate revocation |
 | POST | /api/kiosk/end | Exact Origin and JSON; ends current session and clears cookie |
 | GET / POST | /api/mentor/members | Mentor; safe roster / create with automatic code and optional client-generated memberId UUID for retries |
-| PATCH | /api/mentor/members/{memberId} | Mentor; edit attendance member without changing native ID |
+| PATCH | /api/mentor/members/{memberId} | Mentor; edit a roster entry without changing its native ID |
 | POST | /api/mentor/members/{memberId}/replace-card | Mentor; operationId UUID makes replacement idempotent |
-| POST | /api/mentor/roster/imports | Mentor. Validate CSV and stage preview with `{importId,csv}`. |
-| GET | /api/mentor/roster/imports/{importId} | Uploading mentor. Preview, selected matches and progress. |
-| POST | /api/mentor/roster/imports/{importId}/apply | Uploading mentor. Apply a batch with cursor and the initial reviewed selections. Retries return saved progress. |
+| POST | /api/mentor/roster/imports | Mentor. Validate CSV and stage a preview with `{importId,csv}` and optional `groupEmail` for older exports. |
+| GET | /api/mentor/roster/imports/{importId} | Uploading mentor. Preview, automatic matches and progress. |
+| POST | /api/mentor/roster/imports/{importId}/apply | Uploading mentor. Apply a batch with the current `cursor`. Retries return saved progress. |
 | GET | /api/admin/mentor-requests | Administrator; verified Google login requests |
 | POST | /api/admin/mentor-requests/{subject}/approve | Administrator; grants mentor plus explicitly selected extra permissions |
-| GET | /api/kiosk/status | Kiosk session availability |
+| GET | /api/kiosk/status | Kiosk session availability, expiration and server time |
 | GET | /api/kiosk/totals | Device; anonymous team shop-hour totals only (week/year/all time) |
-| GET | /api/kiosk/occupants | Device; current display names only for the kiosk splash display |
+| GET | /api/kiosk/occupants | Device; shop open status and current display names grouped by attendance role |
 | POST | /api/kiosk/scan | Device; `{barcode: "000123", operationId: "UUID"}` |
 | GET | /api/kiosk/operations/{operationId} | Original device only; saved result |
 | POST | /api/kiosk/operations/{operationId} | Original device; `{warningId}` after visible delivery |

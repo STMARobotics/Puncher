@@ -9,11 +9,11 @@ import { Puncher } from "../service/domain";
 import { row, key, uid, type Principal } from "../service/model";
 import { admin, mentor, device, fixture } from "./helpers";
 const csv = (names: string[]) =>
-  "Member Name,Member Email,Member Role\n" +
+  "Group Email [Required],Member Email,Member Name,Member Role,Member Type\n" +
   names
     .map(
       (name, i) =>
-        `${name},person${i}@stmarobotics.org,${i ? "MEMBER" : "OWNER"}`,
+        `frc.students@stmarobotics.org,person${i}@stmarobotics.org,${name},${i ? "MEMBER" : "OWNER"},USER`,
     )
     .join("\n");
 async function empty() {
@@ -26,21 +26,11 @@ async function empty() {
   });
   return db;
 }
-const selections = (job: any) =>
-  job.people.map((p: any) =>
-    p.suggested.memberId ? p.suggested : { memberId: "new" },
-  );
 it("enrolls members with stable codes on reimport and never grants login or activity rewards", async () => {
   const db = await empty(),
     job = await previewRoster(db, mentor, uid(), csv(["Alex", "Jordan"]));
   expect(await all(db, "MEMBERS", { index: "GSI1" })).toHaveLength(0);
-  const first = await applyRosterBatch(
-    db,
-    mentor,
-    job.importId,
-    0,
-    selections(job),
-  );
+  const first = await applyRosterBatch(db, mentor, job.importId, 0);
   expect(first.counts.created).toBe(2);
   const members = await all(db, "MEMBERS", { index: "GSI1" });
   for (const m of members)
@@ -49,16 +39,10 @@ it("enrolls members with stable codes on reimport and never grants login or acti
       memberKind: "student",
       barcode: expect.stringMatching(/^[1-9]\d{5}$/),
     });
-  const again = await previewRoster(
-    db,
-    mentor,
-    uid(),
-    csv(["Alex Renamed", "Jordan"]),
-  );
+  const again = await previewRoster(db, mentor, uid(), csv(["Alex", "Jordan"]));
   expect(
-    (await applyRosterBatch(db, mentor, again.importId, 0, selections(again)))
-      .counts,
-  ).toEqual({ created: 0, updated: 1, unchanged: 1 });
+    (await applyRosterBatch(db, mentor, again.importId, 0)).counts,
+  ).toEqual({ created: 0, updated: 0, unchanged: 2 });
   for (const m of await all(db, "MEMBERS", { index: "GSI1" }))
     expect(m.barcode).toBe(
       members.find((b) => b.memberId === m.memberId)!.barcode,
@@ -70,7 +54,7 @@ it("enrolls members with stable codes on reimport and never grants login or acti
     [...db.rows.values()].filter((r) => r.recordType === "ACTIVITY_OUTBOX_V1"),
   ).toHaveLength(0);
 });
-it("requires explicit legacy linking, preserves hours/inactivity and never disables absent members", async () => {
+it("automatically matches normalized names and emails and preserves existing role, cards, hours and inactive status", async () => {
   const { db, app, advance } = await fixture();
   await app.scan(device, "000123", uid());
   advance(60);
@@ -78,34 +62,80 @@ it("requires explicit legacy linking, preserves hours/inactivity and never disab
   const hours = await all(db, "MEMBER#member-a", { prefix: "SHOP#" });
   await app.saveMember(
     mentor,
-    { displayName: "Alex Example", memberKind: "student", active: false },
+    {
+      displayName: "Alex Example",
+      email: "alex@stmarobotics.org",
+      memberKind: "student",
+      active: false,
+    },
     "member-a",
   );
-  const job = await previewRoster(db, mentor, uid(), csv(["Alex Changed"]));
-  expect(job.people[0].suggested.memberId).toBe("");
-  const before = await db.get(key("MEMBER#member-a"));
-  await applyRosterBatch(db, mentor, job.importId, 0, [
-    { memberId: "member-a", version: before!.v },
-  ]);
+  const job = await previewRoster(
+    db,
+    mentor,
+    uid(),
+    "Group Email [Required],Member Email,Member Name,Member Role,Member Type\n" +
+      "frc.mentors@stmarobotics.org,ALEX@STMAROBOTICS.ORG,alex  example,MEMBER,USER\n" +
+      "frc.mentors@stmarobotics.org,new.mentor@stmarobotics.org,New Mentor,OWNER,USER\n",
+  );
+  expect(job.people[0].match.memberId).toBe("member-a");
+  await applyRosterBatch(db, mentor, job.importId, 0);
   expect(await db.get(key("MEMBER#member-a"))).toMatchObject({
     barcode: "000123",
     active: false,
+    memberKind: "student",
+  });
+  expect(
+    await db.get(key("MEMBER#" + job.people[1].newMemberId)),
+  ).toMatchObject({
+    active: true,
+    memberKind: "mentor",
   });
   expect((await db.get(key("MEMBER#member-b")))?.active).toBe(true);
   expect(await all(db, "MEMBER#member-a", { prefix: "SHOP#" })).toEqual(hours);
 });
+
+it("creates a separate card when just the email matches and keeps the existing login binding", async () => {
+  const db = await empty();
+  const first = await previewRoster(db, mentor, uid(), csv(["Original"]));
+  await applyRosterBatch(db, mentor, first.importId, 0);
+  const second = await previewRoster(
+    db,
+    mentor,
+    uid(),
+    csv(["Different Person"]),
+  );
+  expect(second.people[0]).toMatchObject({ canEnroll: false });
+  expect(second.people[0].match).toBeUndefined();
+  await applyRosterBatch(db, mentor, second.importId, 0);
+  const [original, newer] = await Promise.all([
+    db.get(key("MEMBER#" + first.people[0].newMemberId)),
+    db.get(key("MEMBER#" + second.people[0].newMemberId)),
+  ]);
+  expect(original?.csvEmail).toBe("person0@stmarobotics.org");
+  expect(newer?.csvEmail).toBeUndefined();
+  expect(newer?.barcode).not.toBe(original?.barcode);
+  const repeat = await previewRoster(
+    db,
+    mentor,
+    uid(),
+    csv(["Different Person"]),
+  );
+  expect(repeat.people[0].match.memberId).toBe(newer?.memberId);
+});
+
 it("makes duplicate batch deliveries and resumed multi-batch imports idempotent", async () => {
   const db = await empty(),
     text = csv(Array.from({ length: 12 }, (_, i) => "Person " + i));
   const job = await previewRoster(db, mentor, uid(), text);
   const results = await Promise.all([
-    applyRosterBatch(db, mentor, job.importId, 0, selections(job)),
-    applyRosterBatch(db, mentor, job.importId, 0, selections(job)),
+    applyRosterBatch(db, mentor, job.importId, 0),
+    applyRosterBatch(db, mentor, job.importId, 0),
   ]);
   expect(results[0]).toEqual(results[1]);
   expect(results[0].processed).toBe(10);
   const status = await rosterImportStatus(db, mentor, job.importId);
-  expect(status.selections).toHaveLength(12);
+  expect(status.people).toHaveLength(12);
   expect(
     (await applyRosterBatch(db, mentor, job.importId, 10)).counts.created,
   ).toBe(12);
@@ -118,34 +148,31 @@ it("rejects racing new-account claims instead of creating duplicate people", asy
   const db = await empty(),
     a = await previewRoster(db, mentor, uid(), csv(["Alex"])),
     b = await previewRoster(db, mentor, uid(), csv(["Alex"]));
-  await applyRosterBatch(db, mentor, a.importId, 0, selections(a));
-  await expect(
-    applyRosterBatch(db, mentor, b.importId, 0, selections(b)),
-  ).rejects.toThrow("reserved");
+  await applyRosterBatch(db, mentor, a.importId, 0);
+  await expect(applyRosterBatch(db, mentor, b.importId, 0)).rejects.toThrow(
+    "imported since preview",
+  );
   expect(await all(db, "MEMBERS", { index: "GSI1" })).toHaveLength(1);
 });
-it("rolls back a whole batch on stale member data and validates every selection before writing", async () => {
-  const { db, app } = await fixture(),
-    job = await previewRoster(db, mentor, uid(), csv(["First", "Second"]));
-  const a = await db.get(key("MEMBER#member-a")),
-    b = await db.get(key("MEMBER#member-b"));
-  await expect(
-    applyRosterBatch(db, mentor, job.importId, 0, [
-      { memberId: "member-a", version: a!.v },
-      { memberId: "member-a", version: a!.v },
-    ]),
-  ).rejects.toThrow("Two CSV rows");
+it("rolls back a whole batch if an exact match changes after preview", async () => {
+  const { db, app } = await fixture();
+  const job = await previewRoster(
+    db,
+    mentor,
+    uid(),
+    "Member Name,Member Email,Member Role\nAlex Example,alex@stmarobotics.org,MEMBER\nJordan Sample,jordan@stmarobotics.org,MEMBER",
+    "frc.students@stmarobotics.org",
+  );
+  const a = await db.get(key("MEMBER#member-a"));
+  const b = await db.get(key("MEMBER#member-b"));
   await app.saveMember(
     mentor,
     { ...b, displayName: "Concurrent edit" },
     "member-b",
   );
-  await expect(
-    applyRosterBatch(db, mentor, job.importId, 0, [
-      { memberId: "member-a", version: a!.v },
-      { memberId: "member-b", version: b!.v },
-    ]),
-  ).rejects.toThrow("changed since preview");
+  await expect(applyRosterBatch(db, mentor, job.importId, 0)).rejects.toThrow(
+    "changed since preview",
+  );
   expect(await db.get(key("MEMBER#member-a"))).toEqual(a);
   expect((await rosterImportStatus(db, mentor, job.importId)).processed).toBe(
     0,
@@ -164,9 +191,9 @@ it("isolates import ownership, checks live mentor revocation and enforces previe
     const i = await tx.get(key("IDENTITY#" + mentor.id));
     await tx.put({ ...i!, enabled: false });
   });
-  await expect(
-    applyRosterBatch(db, mentor, job.importId, 0, selections(job)),
-  ).rejects.toThrow("disabled");
+  await expect(applyRosterBatch(db, mentor, job.importId, 0)).rejects.toThrow(
+    "disabled",
+  );
   await atomic(db, async (tx) => {
     const j = await tx.get(key("ROSTER_IMPORT#" + job.importId));
     await tx.put({ ...j!, expiresAt: "2000-01-01T00:00:00.000Z" });

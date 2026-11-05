@@ -41,11 +41,9 @@ describe("server-managed OAuth sessions", () => {
       "Member Name,Member Email,Member Role\nAlex Example," +
         email +
         ",MEMBER\n",
+      "frc.students@stmarobotics.org",
     );
-    const member = await db.get(key("MEMBER#member-a"));
-    await applyRosterBatch(db, mentor, job.importId, 0, [
-      { memberId: "member-a", version: member!.v },
-    ]);
+    await applyRosterBatch(db, mentor, job.importId, 0);
     const start = await beginGoogleSignIn(db);
     const state = new URL(start.headers.location as string).searchParams.get(
       "state",

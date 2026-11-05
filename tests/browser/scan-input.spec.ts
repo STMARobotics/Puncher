@@ -277,3 +277,50 @@ test("kiosk keeps motion on, hides removed labels, and centers date and time at 
     )
     .toBeGreaterThan(5);
 });
+
+test("the kiosk keeps 60 occupants in compact columns and ends when its server cutoff arrives", async ({
+  page,
+}) => {
+  const asOf = "2026-06-01T04:59:55.000Z";
+  const expiresAt = "2026-06-01T05:00:00.000Z";
+  await page.clock.install({ time: new Date(asOf) });
+  await page.route("**/api/kiosk/**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    return route.fulfill({
+      json: path.endsWith("/status")
+        ? { ready: true, sessionId: "test-session", asOf, expiresAt }
+        : path.endsWith("/occupants")
+          ? {
+              shopOpen: true,
+              asOf,
+              validUntil: expiresAt,
+              mentors: Array.from({ length: 20 }, (_, index) => ({
+                displayName: "Mentor " + index,
+              })),
+              occupants: Array.from({ length: 40 }, (_, index) => ({
+                displayName: "Student " + index,
+              })),
+            }
+          : {},
+    });
+  });
+  await page.goto("/kiosk");
+  await expect(
+    page
+      .getByRole("region", { name: "Mentors", exact: true })
+      .getByRole("listitem"),
+  ).toHaveCount(20);
+  await expect(
+    page
+      .getByRole("region", { name: "Students", exact: true })
+      .getByRole("listitem"),
+  ).toHaveCount(40);
+  await expect(page.getByText("SHOP OPEN", { exact: true })).toBeVisible();
+  await page.clock.fastForward(5100);
+  await expect(
+    page.getByRole("heading", { name: "Scan kiosk activation code" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("This kiosk session ended.", { exact: false }),
+  ).toBeVisible();
+});

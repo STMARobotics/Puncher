@@ -11,7 +11,7 @@ import { MentorConsole } from "./mentor-console";
 import { ScanBuffer } from "./scanner";
 import { ScanEffects } from "./scan-effects";
 import { PuncherMark } from "./puncher-mark";
-import { KioskActivation } from "./kiosk-activation";
+import { activateKioskSession, KioskActivation } from "./kiosk-activation";
 const Camera = React.lazy(() =>
   import("./camera").then((module) => ({ default: module.Camera })),
 );
@@ -21,7 +21,6 @@ const ActivationPass = React.lazy(() =>
 );
 type Config = {
   googleClientId: string;
-  statsUrl: string;
   localFixtures: boolean;
 };
 type Person = { id: string; roles: string[]; barcode?: string };
@@ -113,6 +112,7 @@ function App() {
     history.pushState(null, "", "/");
   }
   async function generateActivation() {
+    if (page !== "home") navigate("home");
     setGenerating(true);
     setActivation(undefined);
     setError("");
@@ -126,6 +126,17 @@ function App() {
       setGenerating(false);
     }
   }
+  const mentorActions = (
+    <>
+      <button onClick={() => navigate("members")}>Manage students</button>
+      <button onClick={() => navigate("new-event")}>
+        Create a volunteer event
+      </button>
+      <button disabled={generating} onClick={generateActivation}>
+        {generating ? "Generating…" : "Generate kiosk activation QR"}
+      </button>
+    </>
+  );
   return (
     <>
       <header className={page === "kiosk" ? "kiosk-header" : ""}>
@@ -142,27 +153,16 @@ function App() {
           </span>
           <span className="brand-wordmark">PUNCHER</span>
         </a>
-        <nav aria-label="Main navigation">
-          {page !== "kiosk" && person && (
-            <>
-              {isMentor && (
-                <>
-                  <button onClick={() => navigate("home")}>
-                    Mentor dashboard
-                  </button>
-                  <button onClick={() => navigate("members")}>
-                    Manage members
-                  </button>
-                  <button onClick={() => navigate("events")}>
-                    Volunteer events
-                  </button>
-                  <a href={config?.statsUrl}>View hours ↗</a>
-                </>
-              )}
-              <button onClick={signOut}>Sign out</button>
-            </>
-          )}
-        </nav>
+        {page !== "kiosk" && person && (
+          <>
+            {isMentor && (
+              <nav aria-label="Main navigation">{mentorActions}</nav>
+            )}
+            <button className="secondary sign-out" onClick={signOut}>
+              Sign out
+            </button>
+          </>
+        )}
       </header>
       {config?.localFixtures && <div className="local-banner">Test data</div>}
       <main className={page === "kiosk" ? "kiosk-main" : ""}>
@@ -195,7 +195,7 @@ function App() {
                   Local mentor
                 </button>
                 <button onClick={() => signIn("local-student")}>
-                  Local member
+                  Local student
                 </button>
                 <button
                   className="secondary"
@@ -227,20 +227,10 @@ function App() {
           <section className="panel mentor-dashboard">
             <h1>MENTOR DASHBOARD</h1>
             <p>
-              Manage attendance members, organize volunteer events, or activate
-              the shop kiosk.
+              Manage students, organize volunteer events, or activate the shop
+              kiosk.
             </p>
-            <div className="mentor-actions">
-              <button onClick={() => navigate("members")}>
-                Manage members
-              </button>
-              <button onClick={() => navigate("new-event")}>
-                Create a volunteer event
-              </button>
-              <button disabled={generating} onClick={generateActivation}>
-                {generating ? "Generating…" : "Generate kiosk activation QR"}
-              </button>
-            </div>
+            <div className="mentor-actions">{mentorActions}</div>
             {activation && (
               <React.Suspense fallback={<p>Loading QR code…</p>}>
                 <ActivationPass key={activation.code} {...activation} />
@@ -262,7 +252,7 @@ function App() {
               <div className="notice error">
                 <p>
                   An unconfirmed scan from a different kiosk session needs
-                  review. Check the member's attendance before clearing it.
+                  review. Check the student's attendance before clearing it.
                 </p>
                 <button
                   onClick={() => {
@@ -301,7 +291,6 @@ function Kiosk() {
     [focused, setFocused] = useState(document.hasFocus()),
     [attendanceVersion, setAttendanceVersion] = useState(0),
     [shopOpen, setShopOpen] = useState<boolean>(),
-    [scanningActivation, setScanningActivation] = useState(false),
     [enteredCharacters, setEnteredCharacters] = useState(0),
     [scanPulse, setScanPulse] = useState(0);
   const input = useRef<HTMLInputElement>(null),
@@ -312,7 +301,18 @@ function Kiosk() {
     timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const [now, setNow] = useState(new Date());
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 1000);
+    let expiry: ReturnType<typeof setTimeout> | undefined;
+    let expiresAt = Infinity;
+    const tick = () => {
+      setNow(new Date());
+      if (performance.now() >= expiresAt) {
+        expiresAt = Infinity;
+        setReady(false);
+        setError("This kiosk session ended. Scan a new mentor QR to restart.");
+      }
+    };
+    const t = setInterval(tick, 1000);
+    window.addEventListener("focus", tick);
     api("/kiosk/status")
       .then((session) => {
         const previous = sessionStorage.getItem("puncher-kiosk-session");
@@ -329,7 +329,15 @@ function Kiosk() {
           );
           return;
         }
+        const remaining =
+          Date.parse(session.expiresAt) - Date.parse(session.asOf);
+        if (Number.isFinite(remaining)) {
+          expiresAt = performance.now() + Math.max(0, remaining);
+          if (remaining <= 12 * 3600_000)
+            expiry = setTimeout(tick, Math.max(0, remaining));
+        }
         setReady(true);
+        tick();
       })
       .catch((e) => {
         if (![401, 403].includes(e.status)) setError(e.message);
@@ -337,6 +345,8 @@ function Kiosk() {
       .finally(() => setChecking(false));
     return () => {
       clearInterval(t);
+      clearTimeout(expiry);
+      window.removeEventListener("focus", tick);
       timers.current.forEach(clearTimeout);
     };
   }, []);
@@ -441,7 +451,7 @@ function Kiosk() {
   const submitRef = useRef(submit);
   submitRef.current = submit;
   useEffect(() => {
-    if (!ready || scanningActivation) return;
+    if (!ready) return;
     input.current?.focus();
     const scanner = new ScanBuffer(
       (card) => submitRef.current(card),
@@ -460,7 +470,26 @@ function Kiosk() {
           }, 5000),
         );
       },
-      { onChange: setEnteredCharacters },
+      {
+        onChange: setEnteredCharacters,
+        async activate(code) {
+          if (pending.current || busy.current) return;
+          busy.current = true;
+          generation.current++;
+          setState("processing");
+          setError("");
+          try {
+            await activateKioskSession(code);
+          } catch (e) {
+            setError(
+              e instanceof Error ? e.message : "Could not activate the kiosk.",
+            );
+            setState("error");
+            busy.current = false;
+            input.current?.focus();
+          }
+        },
+      },
     );
     const keydown = (e: KeyboardEvent) => {
       if (e.target instanceof Element && e.target.closest("select,button,a"))
@@ -500,7 +529,7 @@ function Kiosk() {
       window.removeEventListener("focus", focus);
       window.removeEventListener("blur", blur);
     };
-  }, [ready, scanningActivation]);
+  }, [ready]);
   async function endKiosk() {
     if (pending.current || busy.current) {
       setError("Finish the pending scan before ending the kiosk.");
@@ -558,30 +587,19 @@ function Kiosk() {
         </section>
       ) : (
         <>
-          {scanningActivation && (
-            <KioskActivation
-              initialError=""
-              onCancel={() => setScanningActivation(false)}
-            />
-          )}
           <section
-            hidden={scanningActivation}
             className={`scan-panel ${state}${shopOpen === false ? " closed" : ""}`}
             aria-live="polite"
             aria-atomic="true"
           >
             <ScanEffects pulse={scanPulse} />
             <div className="scan-status">
-              <span className={`dot ${focused ? "" : "amber"}`} />
-              {shopOpen === false
-                ? "SHOP CLOSED"
-                : focused
-                  ? state === "processing"
-                    ? "SAVING"
-                    : state === "uncertain"
-                      ? "CONNECTION ISSUE"
-                      : "READY"
-                  : "WINDOW NEEDS FOCUS"}
+              <span className={`dot ${shopOpen === true ? "" : "amber"}`} />
+              {shopOpen === true
+                ? "SHOP OPEN"
+                : shopOpen === false
+                  ? "SHOP CLOSED"
+                  : "CHECKING SHOP"}
             </div>
             <input
               ref={input}
@@ -615,78 +633,70 @@ function Kiosk() {
                   input.current?.focus();
               }}
             />
-            {state === "processing" ? (
-              <>
-                <h2>SAVING…</h2>
-              </>
-            ) : state === "saved" ? (
-              <>
-                <p className="eyebrow">{result.displayName}</p>
-                <h2>
-                  {result.state === "in"
-                    ? "CLOCKED IN"
-                    : result.state === "out"
-                      ? "CLOCKED OUT"
-                      : "SCAN ALREADY RECEIVED"}
-                </h2>
-                <p>
-                  {result.state === "out"
-                    ? `${time(result.startedAt)} → ${time(result.endedAt)} · ${duration(result.creditedSeconds)}`
-                    : time(result.startedAt)}
-                </p>
-                {result.todaySeconds !== undefined && (
+            <div className="scan-content">
+              {state === "processing" ? (
+                <>
+                  <h2>SAVING…</h2>
+                </>
+              ) : state === "saved" ? (
+                <>
+                  <p className="eyebrow">{result.displayName}</p>
+                  <h2>
+                    {result.state === "in"
+                      ? "CLOCKED IN"
+                      : result.state === "out"
+                        ? "CLOCKED OUT"
+                        : "SCAN ALREADY RECEIVED"}
+                  </h2>
                   <p>
-                    Today <strong>{duration(result.todaySeconds)}</strong>
+                    {result.state === "out"
+                      ? `${time(result.startedAt)} → ${time(result.endedAt)} · ${duration(result.creditedSeconds)}`
+                      : time(result.startedAt)}
                   </p>
-                )}
-                {result.warning && (
-                  <div className="warning">
-                    No checkout on {result.warning.shopDate}: 0 hours for that
-                    visit. Remember to scan out.
-                  </div>
-                )}
-              </>
-            ) : state === "uncertain" ? (
-              <>
-                <h2>SCAN NOT CONFIRMED</h2>
-                <p className="error">{error}</p>
-                <p>Retrying. Don’t scan again yet.</p>
-                <button
-                  onClick={() => pending.current && send(pending.current)}
-                >
-                  Retry
-                </button>
-              </>
-            ) : state === "error" ? (
-              <>
-                <h2>SCAN FAILED</h2>
-                <p className="error">{error}</p>
-              </>
-            ) : (
-              <>
-                <h2>
-                  {shopOpen === false ? "SCAN TO CLOCK OUT" : "SCAN YOUR ID"}
-                </h2>
-              </>
-            )}
-            {shopOpen === false && (
-              <p>Clock-outs only. Attendance time is paused.</p>
-            )}
-            <button
-              className="secondary"
-              disabled={state === "processing" || state === "uncertain"}
-              onClick={() => {
-                if (!pending.current && !busy.current) {
-                  setEnteredCharacters(0);
-                  setScanningActivation(true);
-                }
-              }}
-            >
-              Scan mentor activation code
-            </button>
-            {!focused && (
-              <p className="warning">Select this window to resume scanning.</p>
-            )}
+                  {result.todaySeconds !== undefined && (
+                    <p>
+                      Today <strong>{duration(result.todaySeconds)}</strong>
+                    </p>
+                  )}
+                  {result.warning && (
+                    <div className="warning">
+                      No checkout on {result.warning.shopDate}: 0 hours for that
+                      visit. Remember to scan out.
+                    </div>
+                  )}
+                </>
+              ) : state === "uncertain" ? (
+                <>
+                  <h2>SCAN NOT CONFIRMED</h2>
+                  <p className="error">{error}</p>
+                  <p>Retrying. Don’t scan again yet.</p>
+                  <button
+                    onClick={() => pending.current && send(pending.current)}
+                  >
+                    Retry
+                  </button>
+                </>
+              ) : state === "error" ? (
+                <>
+                  <h2>SCAN FAILED</h2>
+                  <p className="error">{error}</p>
+                </>
+              ) : (
+                <>
+                  <h2>
+                    {shopOpen === false ? "SCAN TO CLOCK OUT" : "SCAN YOUR ID"}
+                  </h2>
+                </>
+              )}
+              {shopOpen === false && (
+                <p>Clock-outs only. Attendance time is paused.</p>
+              )}
+              {!focused && (
+                <p className="warning">
+                  Select this window to resume scanning.
+                </p>
+              )}
+            </div>
             {enteredCharacters > 0 &&
               state !== "processing" &&
               state !== "uncertain" && (
@@ -796,7 +806,7 @@ function InShop({
     (presence?.mentors.length ?? 0) + (presence?.occupants.length ?? 0);
   const groups = [
     { label: "Mentors", people: presence?.mentors ?? [] },
-    { label: "Members", people: presence?.occupants ?? [] },
+    { label: "Students", people: presence?.occupants ?? [] },
   ];
   return (
     <section className="in-shop" aria-labelledby="in-shop-title">

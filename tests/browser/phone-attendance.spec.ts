@@ -54,6 +54,7 @@ test("a mentor phone activates an anonymous kiosk and a member phone clocks atte
       .click();
     await mentor
       .getByRole("button", { name: "Generate kiosk activation QR" })
+      .first()
       .click();
     const qr = await readCode(
       mentor.getByRole("img", { name: "Kiosk activation QR code" }),
@@ -66,7 +67,10 @@ test("a mentor phone activates an anonymous kiosk and a member phone clocks atte
     await kiosk.keyboard.press("Enter");
     await expect(kiosk.getByLabel("Student ID scanner input")).toBeFocused();
     const mentors = kiosk.getByRole("region", { name: "Mentors", exact: true });
-    const members = kiosk.getByRole("region", { name: "Members", exact: true });
+    const members = kiosk.getByRole("region", {
+      name: "Students",
+      exact: true,
+    });
     await expect(mentors.getByText("local mentor")).toBeVisible();
     await mentor.getByText("Your attendance barcode", { exact: true }).click();
     const mentorCard = await readCode(
@@ -79,14 +83,26 @@ test("a mentor phone activates an anonymous kiosk and a member phone clocks atte
     expect((await kiosk.request.get("/api/me")).status()).toBe(401);
 
     await member.goto("/");
-    await member.getByRole("button", { name: "Local member" }).click();
+    await member.getByRole("button", { name: "Local student" }).click();
     const code = await readCode(
       member.getByRole("img", { name: "Your attendance barcode" }),
       BarcodeFormat.CODE_128,
     );
     expect(code).toBe("000123");
+    await member
+      .context()
+      .grantPermissions(["clipboard-read", "clipboard-write"]);
+    await member.getByRole("button", { name: "Copy barcode ID" }).click();
+    await expect(member.getByRole("status")).toHaveText("Barcode ID copied.");
+    expect(await member.evaluate(() => navigator.clipboard.readText())).toBe(
+      "000123",
+    );
+    await expect(kiosk.getByText("SHOP OPEN", { exact: true })).toBeVisible();
+    const scannerHeight = await kiosk
+      .locator(".scan-panel")
+      .evaluate((el) => el.getBoundingClientRect().height);
     await expect(
-      member.getByRole("button", { name: "Manage members" }),
+      member.getByRole("button", { name: "Manage students" }),
     ).toHaveCount(0);
     const presence = await (
       await kiosk.request.get("/api/kiosk/occupants")
@@ -145,20 +161,21 @@ test("a mentor phone activates an anonymous kiosk and a member phone clocks atte
     await kiosk.keyboard.type(code);
     await kiosk.keyboard.press("Enter");
     await expect(kiosk.getByText(/Shop closed. Ask a mentor/)).toBeVisible();
+    expect(
+      await kiosk
+        .locator(".scan-panel")
+        .evaluate((el) => el.getBoundingClientRect().height),
+    ).toBe(scannerHeight);
 
-    await kiosk
-      .getByRole("button", { name: "Scan mentor activation code" })
-      .click();
     await mentor
       .getByRole("button", { name: "Generate kiosk activation QR" })
+      .first()
       .click();
     const reopen = await readCode(
       mentor.getByRole("img", { name: "Kiosk activation QR code" }),
       BarcodeFormat.QR_CODE,
     );
-    await expect(
-      kiosk.getByLabel("Kiosk activation scanner input"),
-    ).toBeFocused();
+    await expect(kiosk.getByLabel("Student ID scanner input")).toBeFocused();
     await kiosk.keyboard.type(reopen);
     await kiosk.keyboard.press("Enter");
     await expect(

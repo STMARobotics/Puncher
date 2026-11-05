@@ -14,6 +14,7 @@ export type Principal = {
   roles: string[];
   memberId?: string;
   rosterEmail?: string;
+  expiresAt?: string;
 };
 export class Fault extends Error {
   constructor(
@@ -56,6 +57,11 @@ export function localDay(now: Date) {
     .toZonedDateTimeISO(ZONE)
     .toPlainDate()
     .toString();
+}
+export function kioskExpiry(launchedAt: string | undefined, expiresAt: string) {
+  if (!launchedAt) return expiresAt;
+  const midnight = cutoff(localDay(new Date(launchedAt)));
+  return expiresAt < midnight ? expiresAt : midnight;
 }
 export function cutoff(date: string) {
   return Temporal.PlainDate.from(validDate(date))

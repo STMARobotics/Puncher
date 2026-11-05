@@ -30,15 +30,15 @@ function downloadRoster(members: any[]) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 export function MentorConsole({ administrator }: { administrator: boolean }) {
-  const [tab, setTab] = useState("members");
+  const [tab, setTab] = useState("students");
   return (
     <>
       <div className="page-heading">
-        <h1>MANAGE MEMBERS</h1>
+        <h1>MANAGE STUDENTS</h1>
       </div>
       <nav className="tabs" aria-label="Mentor tools">
         {[
-          "members",
+          "students",
           "kiosks",
           ...(administrator ? ["mentor access", "import review", "audit"] : []),
         ].map((t) => (
@@ -51,7 +51,7 @@ export function MentorConsole({ administrator }: { administrator: boolean }) {
           </button>
         ))}
       </nav>
-      {tab === "members" ? (
+      {tab === "students" ? (
         <Members />
       ) : tab === "kiosks" ? (
         <KioskSessions />
@@ -99,7 +99,9 @@ function Members() {
       );
       setForm(empty());
       setEditing(false);
-      setMessage("Member saved. The card code is assigned automatically.");
+      setMessage(
+        "Roster entry saved. The card code is assigned automatically.",
+      );
       await refresh();
     } catch (e: any) {
       setError(e.message);
@@ -137,7 +139,7 @@ function Members() {
   }
   return (
     <>
-      <RosterUpload members={members} onComplete={refresh} />
+      <RosterUpload onComplete={refresh} />
       <section className="panel">
         <div className="mentor-actions">
           <button
@@ -158,7 +160,7 @@ function Members() {
         {message && <p role="status">{message}</p>}
       </section>
       <section className="panel">
-        <h2>{editing ? "EDIT MEMBER" : "ADD MEMBER"}</h2>
+        <h2>{editing ? "EDIT ROSTER ENTRY" : "ADD ROSTER ENTRY"}</h2>
         <form className="form-grid" onSubmit={save}>
           <label>
             Name
@@ -181,12 +183,12 @@ function Members() {
             />
           </label>
           <label>
-            Participant type
+            Role
             <select
               value={form.memberKind}
               onChange={(e) => setForm({ ...form, memberKind: e.target.value })}
             >
-              <option value="student">Member</option>
+              <option value="student">Student</option>
               <option value="mentor">Mentor</option>
             </select>
           </label>
@@ -204,7 +206,7 @@ function Members() {
             </p>
           )}
           <button disabled={busy}>
-            {editing ? "Save member" : "Add member"}
+            {editing ? "Save entry" : "Add entry"}
           </button>
           {editing && (
             <button
@@ -221,13 +223,14 @@ function Members() {
         </form>
       </section>
       <section className="panel">
-        <h2>MEMBERS · {members.length}</h2>
+        <h2>STUDENTS AND MENTORS · {members.length}</h2>
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>Name</th>
                 <th>Email</th>
+                <th>Role</th>
                 <th>Card code</th>
                 <th>Status</th>
                 <th>Actions</th>
@@ -238,6 +241,7 @@ function Members() {
                 <tr key={m.memberId}>
                   <td>{m.displayName}</td>
                   <td>{m.email ?? "—"}</td>
+                  <td>{m.memberKind === "mentor" ? "Mentor" : "Student"}</td>
                   <td>{m.barcode ?? "Unassigned"}</td>
                   <td>{m.active ? "Active" : "Inactive"}</td>
                   <td>
@@ -248,7 +252,7 @@ function Members() {
                         setEditing(true);
                       }}
                     >
-                      Edit member
+                      Edit entry
                     </button>
                     <button
                       className="quiet"

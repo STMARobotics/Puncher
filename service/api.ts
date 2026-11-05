@@ -14,7 +14,16 @@ import {
 } from "./roster-import";
 import { store, runtime, publicConfig } from "./runtime";
 import { all, atomic, type Store } from "./store";
-import { Fault, assert, admin, mentor, owns, key, hash } from "./model";
+import {
+  Fault,
+  assert,
+  admin,
+  mentor,
+  owns,
+  key,
+  hash,
+  kioskExpiry,
+} from "./model";
 import {
   beginGoogleSignIn,
   endSession,
@@ -152,7 +161,12 @@ export async function dispatch(req: Request, db: Store = store()) {
     if (path.startsWith("/api/kiosk/")) {
       const p = await device(headers, db);
       if (method === "GET" && path === "/api/kiosk/status")
-        return response(200, { ready: true, sessionId: p.id });
+        return response(200, {
+          ready: true,
+          sessionId: p.id,
+          expiresAt: p.expiresAt,
+          asOf: new Date().toISOString(),
+        });
       if (method === "GET" && path === "/api/kiosk/totals")
         return response(200, await shopTotals(db, p));
       if (method === "GET" && path === "/api/kiosk/occupants")
@@ -218,7 +232,7 @@ export async function dispatch(req: Request, db: Store = store()) {
             sessionId: deviceId,
             label,
             enabled,
-            expiresAt,
+            expiresAt: kioskExpiry(launchedAt, expiresAt),
             launchedAt,
           })),
       );
@@ -226,7 +240,10 @@ export async function dispatch(req: Request, db: Store = store()) {
     if (sessionToEnd && method === "DELETE")
       return response(200, await app.revokeDevice(p, sessionToEnd[1]));
     if (path === "/api/mentor/roster/imports" && method === "POST")
-      return response(201, await previewRoster(db, p, b.importId, b.csv));
+      return response(
+        201,
+        await previewRoster(db, p, b.importId, b.csv, b.groupEmail),
+      );
     const csvImport = path.match(
       /^\/api\/mentor\/roster\/imports\/([^/]+)(?:\/(apply))?$/,
     );
@@ -235,12 +252,12 @@ export async function dispatch(req: Request, db: Store = store()) {
     if (csvImport && method === "POST" && csvImport[2])
       return response(
         200,
-        await applyRosterBatch(db, p, csvImport[1], b.cursor, b.selections),
+        await applyRosterBatch(db, p, csvImport[1], b.cursor),
       );
     if (path.startsWith("/api/mentor/roster/"))
       throw new Fault(
         410,
-        "Use Upload members CSV in mentor tools. Google directory sync has been retired.",
+        "Use Upload roster CSV in mentor tools. Google directory sync has been retired.",
       );
     if (path === "/api/mentor/members" && method === "GET")
       return response(
@@ -272,7 +289,7 @@ export async function dispatch(req: Request, db: Store = store()) {
         b.memberId === undefined ||
           (typeof b.memberId === "string" &&
             /^[0-9a-f-]{36}$/.test(b.memberId)),
-        "Invalid member request ID.",
+        "Invalid roster request ID.",
       );
       return response(201, await app.saveMember(p, b, b.memberId));
     }

@@ -1,13 +1,19 @@
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 
-export function KioskActivation({
-  initialError,
-  onCancel,
-}: {
-  initialError: string;
-  onCancel?: () => void;
-}) {
+export async function activateKioskSession(code: string) {
+  const session = await api("/kiosk/activate", { code });
+  const previous = sessionStorage.getItem("puncher-kiosk-session");
+  if (
+    sessionStorage.getItem("puncher-pending") &&
+    (!session.resumed || previous !== session.sessionId)
+  )
+    sessionStorage.setItem("puncher-pending-foreign", "true");
+  sessionStorage.setItem("puncher-kiosk-session", session.sessionId);
+  window.location.reload();
+}
+
+export function KioskActivation({ initialError }: { initialError: string }) {
   const input = useRef<HTMLInputElement>(null);
   const busy = useRef(false);
   const [error, setError] = useState("");
@@ -28,15 +34,7 @@ export function KioskActivation({
     setError("");
     input.current!.value = "";
     try {
-      const session = await api("/kiosk/activate", { code });
-      const previous = sessionStorage.getItem("puncher-kiosk-session");
-      if (
-        sessionStorage.getItem("puncher-pending") &&
-        (!session.resumed || previous !== session.sessionId)
-      )
-        sessionStorage.setItem("puncher-pending-foreign", "true");
-      sessionStorage.setItem("puncher-kiosk-session", session.sessionId);
-      window.location.reload();
+      await activateKioskSession(code);
     } catch (error) {
       setError(
         error instanceof Error
@@ -65,11 +63,6 @@ export function KioskActivation({
           maxLength={80}
         />
       </form>
-      {onCancel && (
-        <button className="secondary" disabled={activating} onClick={onCancel}>
-          Back to card scanner
-        </button>
-      )}
       {activating && <p role="status">Activating kiosk…</p>}
       {(error || initialError) && (
         <p className="error" role="alert">

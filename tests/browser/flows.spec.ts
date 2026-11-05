@@ -29,7 +29,10 @@ test("camera permission denial has a recovery message without awarding hours", a
   });
   await page.goto("/");
   await page.getByRole("button", { name: "Local mentor", exact: true }).click();
-  await page.getByRole("button", { name: "Create a volunteer event" }).click();
+  await page
+    .getByRole("main")
+    .getByRole("button", { name: "Create a volunteer event" })
+    .click();
   const title = `Camera check ${Date.now()}`;
   await page.getByLabel("Event title").fill(title);
   await page.getByLabel("Local event date").fill("2026-06-01");
@@ -105,7 +108,10 @@ test("mentor creates an event, adds once, removes with a reason; phone layout wo
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   await page.getByRole("button", { name: "Local mentor", exact: true }).click();
-  await page.getByRole("button", { name: "Create a volunteer event" }).click();
+  await page
+    .getByRole("main")
+    .getByRole("button", { name: "Create a volunteer event" })
+    .click();
   const title = `Synthetic outreach ${Date.now()}`;
   await page.getByLabel("Event title").fill(title);
   await page.getByLabel("Local event date").fill("2026-06-01");
@@ -132,20 +138,27 @@ test("home offers sign-in and kiosk entry and mentors manage members without a p
     page.getByRole("link", { name: "Start kiosk", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Local member", exact: true }),
+    page.getByRole("button", { name: "Local student", exact: true }),
   ).toBeVisible();
   await page
     .getByRole("button", { name: "Local mentor administrator", exact: true })
     .click();
+  await expect(
+    page
+      .getByRole("navigation", { name: "Main navigation" })
+      .getByRole("button"),
+  ).toHaveText([
+    "Manage students",
+    "Create a volunteer event",
+    "Generate kiosk activation QR",
+  ]);
   await page
-    .getByRole("button", { name: "Manage members", exact: true })
+    .getByRole("button", { name: "Manage students", exact: true })
     .first()
     .click();
   const member = page.getByRole("row").filter({ hasText: "Alex Example" });
   await expect(member).toBeVisible();
-  await member
-    .getByRole("button", { name: "Edit member", exact: true })
-    .click();
+  await member.getByRole("button", { name: "Edit entry", exact: true }).click();
   await expect(page.getByText("000123", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: /print/i })).toHaveCount(0);
   await expect(page.getByLabel("Device credential")).toHaveCount(0);
@@ -191,16 +204,19 @@ test("CSV upload preserves existing codes, creates new members and exports exter
   await page.goto("/");
   await page.getByRole("button", { name: "Local mentor", exact: true }).click();
   await page
-    .getByRole("button", { name: "Manage members", exact: true })
+    .getByRole("button", { name: "Manage students", exact: true })
     .first()
     .click();
   await expect(
     page.getByRole("button", { name: "Sync roster", exact: true }),
   ).toHaveCount(0);
   const csv =
-    "Member Name,Member Email,Member Role\nAlex Example,alex@stmarobotics.org,MEMBER\nJordan Sample,jordan@stmarobotics.org,MEMBER\nCasey Imported,casey.imported@stmarobotics.org,OWNER\n";
+    "Group Email [Required],Member Email,Member Name,Member Role,Member Type\n" +
+    "frc.students@stmarobotics.org,alex@stmarobotics.org,Alex Example,MEMBER,USER\n" +
+    "frc.students@stmarobotics.org,jordan@stmarobotics.org,Jordan Sample,MEMBER,USER\n" +
+    "frc.mentors@stmarobotics.org,casey.imported@stmarobotics.org,Casey Imported,OWNER,USER\n";
   const upload = () =>
-    page.getByLabel("Google members CSV").setInputFiles({
+    page.getByLabel("Google roster CSV").setInputFiles({
       name: "google-members.csv",
       mimeType: "text/csv",
       buffer: Buffer.from(csv),
@@ -208,17 +224,16 @@ test("CSV upload preserves existing codes, creates new members and exports exter
   await upload();
   await page.getByRole("button", { name: "Preview CSV", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "REVIEW 3 MEMBERS" }),
+    page.getByRole("heading", { name: "REVIEW 3 ROSTER ENTRIES" }),
   ).toBeVisible();
+  await expect(
+    page.getByText("Match existing entry", { exact: true }),
+  ).toHaveCount(2);
+  await expect(page.getByText("Create new entry", { exact: true })).toHaveCount(
+    1,
+  );
   await page
-    .getByLabel("Import action for Alex Example")
-    .selectOption({ label: "Alex Example · 000123" });
-  await page
-    .getByLabel("Import action for Jordan Sample")
-    .selectOption({ label: "Jordan Sample · 000456" });
-  await page.getByLabel("Import action for Casey Imported").selectOption("new");
-  await page
-    .getByRole("button", { name: "Import reviewed members", exact: true })
+    .getByRole("button", { name: "Import roster", exact: true })
     .click();
   await expect(
     page.getByRole("status").filter({ hasText: "Import finished" }),
@@ -228,6 +243,12 @@ test("CSV upload preserves existing codes, creates new members and exports exter
       has: page.getByRole("cell", { name: "Alex Example", exact: true }),
     }),
   ).toContainText("000123");
+  await expect(
+    page
+      .getByRole("row")
+      .filter({ hasText: "Casey Imported" })
+      .getByRole("cell", { name: "Mentor", exact: true }),
+  ).toBeVisible();
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Export active roster CSV" }).click();
   const file = await download,
@@ -240,10 +261,10 @@ test("CSV upload preserves existing codes, creates new members and exports exter
   await upload();
   await page.getByRole("button", { name: "Preview CSV", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "REVIEW 3 MEMBERS" }),
+    page.getByRole("heading", { name: "REVIEW 3 ROSTER ENTRIES" }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: "Import reviewed members", exact: true })
+    .getByRole("button", { name: "Import roster", exact: true })
     .click();
   await expect(
     page.getByRole("status").filter({ hasText: "Import finished" }),
@@ -263,7 +284,7 @@ test("a lost CSV batch response resumes without duplicating members", async ({
   await page.goto("/");
   await page.getByRole("button", { name: "Local mentor", exact: true }).click();
   await page
-    .getByRole("button", { name: "Manage members", exact: true })
+    .getByRole("button", { name: "Manage students", exact: true })
     .first()
     .click();
   const csv =
@@ -273,18 +294,18 @@ test("a lost CSV batch response resumes without duplicating members", async ({
       (_, i) =>
         "Retry Person " + i + ",retry.person" + i + "@stmarobotics.org,MEMBER",
     ).join("\n");
-  await page.getByLabel("Google members CSV").setInputFiles({
+  await page.getByLabel("Google roster CSV").setInputFiles({
     name: "retry-members.csv",
     mimeType: "text/csv",
     buffer: Buffer.from(csv),
   });
+  await page
+    .getByLabel("Source group for older exports")
+    .selectOption("frc.students@stmarobotics.org");
   await page.getByRole("button", { name: "Preview CSV", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "REVIEW 11 MEMBERS" }),
+    page.getByRole("heading", { name: "REVIEW 11 ROSTER ENTRIES" }),
   ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Mark unmatched as new", exact: true })
-    .click();
   let dropped = false;
   await page.route("**/api/mentor/roster/imports/*/apply", async (route) => {
     if (!dropped) {
@@ -294,7 +315,7 @@ test("a lost CSV batch response resumes without duplicating members", async ({
     } else await route.continue();
   });
   await page
-    .getByRole("button", { name: "Import reviewed members", exact: true })
+    .getByRole("button", { name: "Import roster", exact: true })
     .click();
   await expect(page.getByRole("alert")).toContainText(
     "Completed batches are saved",
@@ -302,7 +323,7 @@ test("a lost CSV batch response resumes without duplicating members", async ({
   await page.reload();
   await page.getByRole("button", { name: "Local mentor", exact: true }).click();
   await page
-    .getByRole("button", { name: "Manage members", exact: true })
+    .getByRole("button", { name: "Manage students", exact: true })
     .first()
     .click();
   await expect(

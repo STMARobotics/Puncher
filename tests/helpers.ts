@@ -42,6 +42,7 @@ export async function fixture(db: Store = new MemoryStore(), open = true) {
     admin,
     {
       displayName: "Alex Example",
+      email: "alex@stmarobotics.org",
       memberKind: "student",
       active: true,
       barcode: "000123",
@@ -52,6 +53,7 @@ export async function fixture(db: Store = new MemoryStore(), open = true) {
     admin,
     {
       displayName: "Jordan Sample",
+      email: "jordan@stmarobotics.org",
       memberKind: "student",
       active: true,
       barcode: "000456",

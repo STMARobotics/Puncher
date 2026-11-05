@@ -1,27 +1,18 @@
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "./api";
-type Choice = { memberId: string; version?: number };
 const savedImport = "puncher-csv-import";
 export function RosterUpload({
-  members,
   onComplete,
 }: {
-  members: any[];
   onComplete: () => Promise<void>;
 }) {
   const [file, setFile] = useState<File>(),
     [job, setJob] = useState<any>(),
-    [choices, setChoices] = useState<Choice[]>([]),
+    [groupEmail, setGroupEmail] = useState(""),
     [working, setWorking] = useState(false),
     [error, setError] = useState("");
   const uploadId = useRef<string | undefined>(undefined),
     mounted = useRef(true);
-  function load(value: any) {
-    setJob(value);
-    setChoices(
-      value.selections ?? value.people.map((person: any) => person.suggested),
-    );
-  }
   useEffect(() => {
     mounted.current = true;
     const id = sessionStorage.getItem(savedImport);
@@ -29,7 +20,7 @@ export function RosterUpload({
       api("/mentor/roster/imports/" + id)
         .then((value) => {
           if (mounted.current && sessionStorage.getItem(savedImport) === id)
-            load(value);
+            setJob(value);
         })
         .catch((e) => {
           if (mounted.current && sessionStorage.getItem(savedImport) === id)
@@ -57,10 +48,11 @@ export function RosterUpload({
       uploadId.current ??= crypto.randomUUID();
       const value = await api("/mentor/roster/imports", {
         csv,
+        groupEmail,
         importId: uploadId.current,
       });
       sessionStorage.setItem(savedImport, value.importId);
-      load(value);
+      setJob(value);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -77,7 +69,6 @@ export function RosterUpload({
           `/mentor/roster/imports/${current.importId}/apply`,
           {
             cursor: current.processed,
-            ...(current.status === "preview" ? { selections: choices } : {}),
           },
         );
         current = { ...current, ...result };
@@ -94,29 +85,23 @@ export function RosterUpload({
       if (mounted.current)
         setError(
           e.message +
-            " Completed batches are saved. Retry to resume, or upload again to review changed members.",
+            " Completed batches are saved. Retry to resume, or upload again to refresh matching.",
         );
     } finally {
       if (mounted.current) setWorking(false);
     }
   }
-  const reviewed =
-    choices.length === job?.people?.length &&
-    choices.every((c) => !!c.memberId);
   return (
     <section className="panel">
-      <h2>UPLOAD MEMBERS CSV</h2>
+      <h2>UPLOAD ROSTER CSV</h2>
       <p>
-        Choose the Google group export with Member Name, Member Email and Member
-        Role columns. New members receive six-digit card codes automatically.
-      </p>
-      <p className="muted">
-        Link existing members to keep their card codes and hours. Manage
-        attendance status and mentor access separately.
+        Upload a Google Groups CSV. Existing entries match by name and email.
+        New entries receive a six-digit card code and a role from their Google
+        group.
       </p>
       <div className="mentor-actions">
         <label>
-          Google members CSV
+          Google roster CSV
           <input
             type="file"
             accept=".csv,text/csv"
@@ -125,11 +110,28 @@ export function RosterUpload({
               setFile(e.target.files?.[0]);
               uploadId.current = undefined;
               setJob(undefined);
-              setChoices([]);
               setError("");
               sessionStorage.removeItem(savedImport);
             }}
           />
+        </label>
+        <label>
+          Source group for older exports
+          <select
+            value={groupEmail}
+            disabled={working}
+            onChange={(event) => {
+              setGroupEmail(event.target.value);
+              uploadId.current = undefined;
+              setJob(undefined);
+              setError("");
+              sessionStorage.removeItem(savedImport);
+            }}
+          >
+            <option value="">Read group from CSV</option>
+            <option value="frc.students@stmarobotics.org">frc.students</option>
+            <option value="frc.mentors@stmarobotics.org">frc.mentors</option>
+          </select>
         </label>
         <button disabled={!file || working} onClick={preview}>
           Preview CSV
@@ -145,90 +147,47 @@ export function RosterUpload({
       )}
       {job && (
         <>
-          {job.status === "preview" && (
-            <>
-              <h3>REVIEW {job.total} MEMBERS</h3>
-              <p>
-              Confirm the proposed email matches. For older records or changed
-              addresses, select the existing member.
-              </p>
-              <button
-                className="secondary"
-                disabled={working}
-                onClick={() =>
-                  setChoices((current) =>
-                    current.map((c, i) =>
-                      c.memberId || !job.people[i].allowNew
-                        ? c
-                        : { memberId: "new" },
-                    ),
-                  )
-                }
-              >
-                Mark unmatched as new
-              </button>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>Email</th>
-                      <th>Import action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {job.people.map((person: any, index: number) => (
-                      <tr key={person.email}>
-                        <td>{person.displayName}</td>
-                        <td>{person.email}</td>
-                        <td>
-                          <select
-                            disabled={working}
-                            aria-label={
-                              "Import action for " + person.displayName
-                            }
-                            value={choices[index]?.memberId ?? ""}
-                            onChange={(e) => {
-                              const memberId = e.target.value,
-                                member = members.find(
-                                  (m) => m.memberId === memberId,
-                                );
-                              setChoices((current) =>
-                                current.map((c, i) =>
-                                  i === index
-                                    ? {
-                                        memberId,
-                                        ...(member
-                                          ? { version: member.version }
-                                          : {}),
-                                      }
-                                    : c,
-                                ),
-                              );
-                            }}
-                          >
-                            <option value="">
-                              Choose existing or create new
-                            </option>
-                            <option value="new" disabled={!person.allowNew}>
-                              Create new member
-                            </option>
-                            {members.map((m) => (
-                              <option key={m.memberId} value={m.memberId}>
-                                {m.displayName} · {m.barcode ?? "No card"}
-                                {m.active ? "" : " · Inactive"}
-                              </option>
-                            ))}
-                          </select>
-                          <small>{person.reason}</small>
-                        </td>
+          {job.status === "preview" &&
+            (job.automatic ? (
+              <>
+                <h3>REVIEW {job.total} ROSTER ENTRIES</h3>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Email</th>
+                        <th>Role</th>
+                        <th>Import action</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
+                    </thead>
+                    <tbody>
+                      {job.people.map((person: any) => (
+                        <tr key={person.email}>
+                          <td>{person.displayName}</td>
+                          <td>{person.email}</td>
+                          <td>
+                            {person.memberKind === "mentor"
+                              ? "Mentor"
+                              : "Student"}
+                          </td>
+                          <td>
+                            {person.match
+                              ? "Match existing entry"
+                              : "Create new entry"}
+                            {!person.canEnroll && !person.match && (
+                              <small> · Email already in use</small>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
+              <p>Upload the CSV again to refresh this older preview.</p>
+            ))}
           <p role="status">
             {job.status === "completed"
               ? "Import finished"
@@ -241,19 +200,19 @@ export function RosterUpload({
           </p>
           {job.status !== "completed" && (
             <button
-              disabled={working || (job.status === "preview" && !reviewed)}
+              disabled={working || (job.status === "preview" && !job.automatic)}
               onClick={apply}
             >
               {working
                 ? "Importing…"
                 : job.status === "preview"
-                  ? "Import reviewed members"
+                  ? "Import roster"
                   : "Resume import"}
             </button>
           )}
           <p className="muted">
             Import runs in small batches. You can resume after a connection
-            failure or page reload. Choosing another file keeps any members
+            failure or page reload. Choosing another file keeps any entries
             already imported.
           </p>
         </>
