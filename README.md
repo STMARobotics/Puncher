@@ -6,7 +6,7 @@ Cross-app integration foundation and rollout: [app harmonization](docs/app-harmo
 
 STMA Robotics / FRC Team 7028 shop timeclock, mentor volunteer logging, and operational administration. AWS-hosted with DynamoDB; Stats is a separate read-only application.
 
-Start with [local development](docs/local-development.md). Node 24+, npm and DynamoDB Local are required. Copy .env.example to .env, start `docker compose up -d`, then run `npm ci`, `npm run db:init`, `npm run seed`, and `npm run dev`. Open http://localhost:5173, choose a local mentor, then Launch kiosk. Synthetic card mappings: 000123 and 000456. Real exports were only staged for review; no production import or AWS deployment was performed.
+Start with [local development](docs/local-development.md). Node 24+, npm and DynamoDB Local are required. Copy .env.example to .env, start `docker compose up -d`, then run `npm ci`, `npm run db:init`, `npm run seed`, and `npm run dev`. Open http://localhost:5173 and select Start kiosk. Generate an activation QR as a local mentor in a separate window. Synthetic card mappings: 000123 and 000456. Real exports were only staged for review; no production import or AWS deployment was performed.
 
 - [Architecture and FMEA inspection](docs/architecture.md)
 - [Deployment, authentication, provisioning, billing](docs/deployment.md)

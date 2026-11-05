@@ -11,15 +11,20 @@ import { MentorConsole } from "./mentor-console";
 import { ScanBuffer } from "./scanner";
 import { ScanEffects } from "./scan-effects";
 import { PuncherMark } from "./puncher-mark";
+import { KioskActivation } from "./kiosk-activation";
 const Camera = React.lazy(() =>
   import("./camera").then((module) => ({ default: module.Camera })),
+);
+const PassCode = React.lazy(() => import("./pass-code"));
+const ActivationPass = React.lazy(() =>
+  import("./pass-code").then((module) => ({ default: module.ActivationPass })),
 );
 type Config = {
   googleClientId: string;
   statsUrl: string;
   localFixtures: boolean;
 };
-type Person = { id: string; roles: string[] };
+type Person = { id: string; roles: string[]; barcode?: string };
 function App() {
   const [config, setConfig] = useState<Config>(),
     [page, setPage] = useState(
@@ -27,14 +32,22 @@ function App() {
     ),
     [person, setPerson] = useState<Person>(),
     [error, setError] = useState(""),
-    [launching, setLaunching] = useState(false),
+    [generating, setGenerating] = useState(false),
+    [activation, setActivation] = useState<{
+      code: string;
+      expiresAt: string;
+    }>(),
     [foreignPending, setForeignPending] = useState(
       sessionStorage.getItem("puncher-pending-foreign") === "true",
     );
+  const isMentor = person?.roles.some(
+    (role) => role === "mentor" || role === "admin",
+  );
   useEffect(() => {
     const expired = () => {
       setPerson(undefined);
-      setError("Your mentor sign-in expired. Please sign in again.");
+      setActivation(undefined);
+      setError("Your sign-in expired. Please sign in again.");
     };
     window.addEventListener("puncher-auth-expired", expired);
     return () => window.removeEventListener("puncher-auth-expired", expired);
@@ -65,10 +78,7 @@ function App() {
   async function signIn(credential: string) {
     try {
       setToken(credential);
-      const mentor = await api("/me");
-      if (!mentor.roles?.some((r: string) => ["mentor", "admin"].includes(r)))
-        throw Error("Puncher is for mentors only.");
-      setPerson(mentor);
+      setPerson(await api("/me"));
       setPage("home");
       setError("");
     } catch (e: any) {
@@ -76,7 +86,7 @@ function App() {
       setPerson(undefined);
       setError(
         e.status === 403
-          ? "Mentor access is not approved. Ask a mentor administrator to finish setup."
+          ? "Ask a mentor to check your roster entry or access approval."
           : e.message,
       );
     }
@@ -85,6 +95,7 @@ function App() {
     try {
       await api("/auth/logout", {}, "POST");
       setPerson(undefined);
+      setActivation(undefined);
       setToken("");
       setPage("home");
       setError("");
@@ -101,20 +112,16 @@ function App() {
     setError("");
     history.pushState(null, "", "/");
   }
-  async function launch() {
-    setLaunching(true);
+  async function generateActivation() {
+    setGenerating(true);
+    setActivation(undefined);
     setError("");
     try {
-      const session = await api("/mentor/kiosk/launch", {});
-      if (sessionStorage.getItem("puncher-pending") && !session.resumed)
-        sessionStorage.setItem("puncher-pending-foreign", "true");
-      sessionStorage.setItem("puncher-kiosk-session", session.sessionId);
-      setToken("");
-      setPerson(undefined);
-      window.location.replace("/kiosk");
+      setActivation(await api("/mentor/kiosk/activation", {}));
     } catch (e: any) {
       setError(e.message);
-      setLaunching(false);
+    } finally {
+      setGenerating(false);
     }
   }
   return (
@@ -134,29 +141,24 @@ function App() {
           <span className="brand-wordmark">PUNCHER</span>
         </a>
         <nav aria-label="Main navigation">
-          {page === "kiosk" ? (
-            <button onClick={() => window.location.replace("/")}>
-              Mentor log in
-            </button>
-          ) : (
-            person && (
-              <>
-                <button onClick={() => navigate("home")}>
-                  Mentor dashboard
-                </button>
-                <button onClick={() => navigate("members")}>
-                  Manage members
-                </button>
-                <button onClick={() => navigate("events")}>
-                  Volunteer events
-                </button>
-                <button disabled={launching} onClick={launch}>
-                  {launching ? "Launching…" : "Launch kiosk"}
-                </button>
-                <a href={config?.statsUrl}>View hours ↗</a>
-                <button onClick={signOut}>Sign out</button>
-              </>
-            )
+          {page !== "kiosk" && person && (
+            <>
+              {isMentor && (
+                <>
+                  <button onClick={() => navigate("home")}>
+                    Mentor dashboard
+                  </button>
+                  <button onClick={() => navigate("members")}>
+                    Manage members
+                  </button>
+                  <button onClick={() => navigate("events")}>
+                    Volunteer events
+                  </button>
+                  <a href={config?.statsUrl}>View hours ↗</a>
+                </>
+              )}
+              <button onClick={signOut}>Sign out</button>
+            </>
           )}
         </nav>
       </header>
@@ -173,7 +175,7 @@ function App() {
           <Kiosk />
         ) : !person ? (
           <section className="signin">
-            <h1>MENTOR LOG IN</h1>
+            <h1>SIGN IN</h1>
             <p>Sign in with your stmarobotics.org Google account.</p>
             {config.googleClientId ? (
               <a className="google-login" href="/api/auth/login">
@@ -182,10 +184,16 @@ function App() {
             ) : (
               <p className="muted">Google sign-in is not configured.</p>
             )}
+            <a className="google-login" href="/kiosk">
+              Start kiosk
+            </a>
             {config.localFixtures && (
               <div className="fixture-buttons">
                 <button onClick={() => signIn("local-mentor")}>
                   Local mentor
+                </button>
+                <button onClick={() => signIn("local-student")}>
+                  Local member
                 </button>
                 <button
                   className="secondary"
@@ -196,6 +204,19 @@ function App() {
               </div>
             )}
           </section>
+        ) : !isMentor ? (
+          <section className="panel student-pass">
+            <h1>Your attendance barcode</h1>
+            {person.barcode && (
+              <React.Suspense fallback={<p>Loading barcode…</p>}>
+                <PassCode
+                  value={person.barcode}
+                  label="Your attendance barcode"
+                />
+              </React.Suspense>
+            )}
+            <p>Scan at the kiosk to clock in or out.</p>
+          </section>
         ) : page === "members" ? (
           <MentorConsole administrator={person.roles.includes("admin")} />
         ) : page === "events" || page === "new-event" ? (
@@ -204,7 +225,7 @@ function App() {
           <section className="panel mentor-dashboard">
             <h1>MENTOR DASHBOARD</h1>
             <p>
-              Manage attendance members, organize volunteer events, or launch
+              Manage attendance members, organize volunteer events, or activate
               the shop kiosk.
             </p>
             <div className="mentor-actions">
@@ -214,10 +235,15 @@ function App() {
               <button onClick={() => navigate("new-event")}>
                 Create a volunteer event
               </button>
-              <button disabled={launching} onClick={launch}>
-                {launching ? "Launching…" : "Launch kiosk"}
+              <button disabled={generating} onClick={generateActivation}>
+                {generating ? "Generating…" : "Generate kiosk activation QR"}
               </button>
             </div>
+            {activation && (
+              <React.Suspense fallback={<p>Loading QR code…</p>}>
+                <ActivationPass key={activation.code} {...activation} />
+              </React.Suspense>
+            )}
             {foreignPending && (
               <div className="notice error">
                 <p>
@@ -289,7 +315,9 @@ function Kiosk() {
         }
         setReady(true);
       })
-      .catch((e) => setError(e.message))
+      .catch((e) => {
+        if (![401, 403].includes(e.status)) setError(e.message);
+      })
       .finally(() => setChecking(false));
     return () => {
       clearInterval(t);
@@ -343,7 +371,9 @@ function Kiosk() {
       const saved = await api("/kiosk/scan", op);
       deliver(op, saved);
     } catch (e: any) {
-      if ([400, 403, 404, 429].includes(e.status)) {
+      const kioskExpired =
+        e.status === 401 || (e.status === 403 && e.message === "Forbidden");
+      if (!kioskExpired && [400, 403, 404, 429].includes(e.status)) {
         pending.current = null;
         sessionStorage.removeItem("puncher-pending");
         setState("error");
@@ -363,7 +393,7 @@ function Kiosk() {
           e.message ||
             "Connection interrupted. Attendance has not been confirmed.",
         );
-        if (e.status === 401) setReady(false);
+        if (kioskExpired) setReady(false);
       }
     } finally {
       busy.current = false;
@@ -468,34 +498,39 @@ function Kiosk() {
   }
   return (
     <div className="kiosk">
-      <div className="kiosk-topline">
-        {ready && (
-          <button className="secondary" onClick={endKiosk}>
-            End kiosk
-          </button>
-        )}
-        <div className="clock">
-          {new Intl.DateTimeFormat("en-US", {
-            timeZone: "America/Chicago",
-            hour: "numeric",
-            minute: "2-digit",
-          }).format(now)}
-          <small>
+      {ready && (
+        <div className="kiosk-topline">
+          {ready && (
+            <button className="secondary" onClick={endKiosk}>
+              End kiosk
+            </button>
+          )}
+          <div className="clock">
             {new Intl.DateTimeFormat("en-US", {
               timeZone: "America/Chicago",
-              weekday: "long",
-              month: "long",
-              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
             }).format(now)}
-          </small>
+            <small>
+              {new Intl.DateTimeFormat("en-US", {
+                timeZone: "America/Chicago",
+                weekday: "long",
+                month: "long",
+                day: "numeric",
+              }).format(now)}
+            </small>
+          </div>
         </div>
-      </div>
+      )}
       {checking ? (
         <p>Checking kiosk session…</p>
+      ) : !ready &&
+        sessionStorage.getItem("puncher-pending-foreign") !== "true" ? (
+        <KioskActivation initialError={error} />
       ) : !ready ? (
         <section className="panel setup">
           <h2>KIOSK LOCKED</h2>
-          <p>A mentor must log in and launch this kiosk.</p>
+          <p>An unconfirmed scan needs mentor review.</p>
           {error && (
             <p className="error" role="alert">
               {error}

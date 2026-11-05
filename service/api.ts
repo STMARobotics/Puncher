@@ -55,13 +55,14 @@ export async function dispatch(req: Request, db: Store = store()) {
     const { method, path, headers } = req;
     if (process.env.API_SCOPE === "kiosk")
       assert(
-        path.startsWith("/api/kiosk/") || path === "/api/health",
+        (path.startsWith("/api/kiosk/") && path !== "/api/kiosk/activate") ||
+          path === "/api/health",
         "Device route unavailable.",
         403,
       );
     if (process.env.API_SCOPE === "staff")
       assert(
-        !path.startsWith("/api/kiosk/"),
+        !path.startsWith("/api/kiosk/") || path === "/api/kiosk/activate",
         "Mentor credentials do not authorize kiosk routes.",
         403,
       );
@@ -101,8 +102,7 @@ export async function dispatch(req: Request, db: Store = store()) {
       return endSession(headers, db);
     if (path === "/api/kiosk/setup" && method === "POST") {
       return response(410, {
-        message:
-          "Log in as a mentor and use Launch kiosk. Manual device setup has been retired.",
+        message: "Start the kiosk and scan a mentor's activation code.",
       });
     }
     if (path === "/api/kiosk/end" && method === "POST") {
@@ -124,6 +124,28 @@ export async function dispatch(req: Request, db: Store = store()) {
         200,
         { ended: true },
         { "set-cookie": kioskCookie("", 0) },
+      );
+    }
+    if (path === "/api/kiosk/activate" && method === "POST") {
+      const session = await app.activateKiosk(
+        b.code,
+        kioskCredential(headers),
+        cookieValue(headers, sessionCookieName(c.local)),
+      );
+      return response(
+        200,
+        {
+          ready: true,
+          sessionId: session.sessionId,
+          resumed: session.resumed,
+          expiresAt: session.expiresAt,
+        },
+        {
+          "set-cookie": [
+            kioskCookie(session.credential, 30 * 86400),
+            ...clearedSessionCookies(c.local),
+          ],
+        },
       );
     }
     if (path.startsWith("/api/kiosk/")) {
@@ -159,33 +181,29 @@ export async function dispatch(req: Request, db: Store = store()) {
       throw new Fault(404, "Route not found.");
     }
     const p = await human(headers, db);
-    if (path === "/api/me" && method === "GET") return response(200, p);
-    mentor(p);
-    if (path === "/api/mentor/kiosk/launch" && method === "POST") {
-      const session = await app.launchKiosk(
-        p,
-        kioskCredential(headers),
-        "Shop kiosk",
-        cookieValue(headers, sessionCookieName(c.local)),
-      );
-      return response(
-        200,
-        {
-          ready: true,
-          sessionId: session.sessionId,
-          resumed: session.resumed,
-          expiresAt: session.expiresAt,
-        },
-        // Keep the renewal credential for 30 days; server-side authorization
-        // still expires after 12h and renewal always requires mentor sign-in.
-        {
-          "set-cookie": [
-            kioskCookie(session.credential, 30 * 86400),
-            ...clearedSessionCookies(c.local),
-          ],
-        },
-      );
+    if (path === "/api/me" && method === "GET") {
+      const student = p.roles.length === 1 && p.roles[0] === "student";
+      const member = student
+        ? await db.get(key("MEMBER#" + p.memberId))
+        : undefined;
+      if (student)
+        assert(
+          member?.active &&
+            member.memberKind === "student" &&
+            /^[0-9]{6}$/.test(member.barcode),
+          "Ask a mentor to assign your attendance card.",
+          403,
+        );
+      return response(200, {
+        id: p.id,
+        roles: p.roles,
+        memberId: p.memberId,
+        ...(student ? { barcode: member?.barcode } : {}),
+      });
     }
+    mentor(p);
+    if (path === "/api/mentor/kiosk/activation" && method === "POST")
+      return response(201, await app.issueKioskActivation(p));
     if (path === "/api/mentor/kiosks" && method === "GET")
       return response(
         200,

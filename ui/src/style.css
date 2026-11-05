@@ -736,6 +736,19 @@ td small {
   top: 20px;
   pointer-events: none;
 }
+.pass-code {
+  display: block;
+  max-width: min(100%, 340px);
+  height: auto;
+  margin: 20px auto;
+  background: white;
+  image-rendering: pixelated;
+}
+.activation-pass,
+.student-pass,
+.kiosk-activation {
+  text-align: center;
+}
 .scan-entry {
   position: absolute;
   bottom: 22px;

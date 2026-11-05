@@ -569,11 +569,55 @@ export class Puncher {
       return { approved: true };
     });
   }
+  async issueKioskActivation(p: Principal) {
+    mentor(p);
+    const code = "PUNCHER-" + randomBytes(24).toString("hex").toUpperCase();
+    const expires = new Date(this.clock().getTime() + 2 * 60_000);
+    await atomic(this.store, async (tx) => {
+      await this.livePrincipal(tx, p);
+      await tx.put(
+        row("KIOSK_ACTIVATION#" + hash(code), "METADATA", {
+          mentorId: p.id,
+          expiresAt: expires.toISOString(),
+          ttl: Math.floor(expires.getTime() / 1000),
+        }),
+      );
+    });
+    return { code, expiresAt: expires.toISOString() };
+  }
+  async activateKiosk(
+    code: unknown,
+    presented?: string,
+    browserSession?: string,
+  ) {
+    assert(
+      typeof code === "string" && /^PUNCHER-[0-9A-F]{48}$/.test(code),
+      "Scan a valid Puncher activation code.",
+    );
+    const activationKey = key("KIOSK_ACTIVATION#" + hash(code));
+    const activation = await this.store.get(activationKey);
+    assert(
+      activation && activation.expiresAt > this.clock().toISOString(),
+      "This code expired or was already used. Ask a mentor for a new one.",
+      401,
+    );
+    const identity = await this.store.get(
+      key("IDENTITY#" + activation.mentorId),
+    );
+    return this.launchKiosk(
+      { kind: "human", id: activation.mentorId, roles: identity?.roles ?? [] },
+      presented,
+      "Shop kiosk",
+      browserSession,
+      activationKey,
+    );
+  }
   async launchKiosk(
     p: Principal,
     presented?: string,
     label = "Shop kiosk",
     mentorSessionToken?: string,
+    activationKey?: ReturnType<typeof key>,
   ) {
     mentor(p);
     const [oldId, oldSecret] = (presented ?? "").split(".");
@@ -584,6 +628,16 @@ export class Puncher {
     ).toISOString();
     const session = await atomic(this.store, async (tx) => {
       await this.livePrincipal(tx, p);
+      if (activationKey) {
+        const activation = await tx.get(activationKey);
+        assert(
+          activation?.mentorId === p.id &&
+            activation.expiresAt > this.clock().toISOString(),
+          "This code expired or was already used. Ask a mentor for a new one.",
+          401,
+        );
+        await tx.del(activationKey);
+      }
       // Hand over this browser to a kiosk without leaving its seven-day mentor
       // session usable. Revoke it in the same transaction as session creation.
       if (mentorSessionToken) {

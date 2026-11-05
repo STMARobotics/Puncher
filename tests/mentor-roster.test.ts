@@ -83,7 +83,7 @@ it("mentor approval preserves existing Stats access and member linkage", async (
     enabled: true,
   });
 });
-it("allows mentors to manage basic members but not permissions, and denies student Puncher sign-in", async () => {
+it("allows mentors to manage basic members but not permissions, and limits student sign-in to their own barcode", async () => {
   env();
   const { db } = await fixture();
   await atomic(db, async (tx) => {
@@ -102,7 +102,7 @@ it("allows mentors to manage basic members but not permissions, and denies stude
         db,
       )
     ).statusCode,
-  ).toBe(403);
+  ).toBe(200);
   expect(
     (
       await dispatch(
@@ -181,18 +181,38 @@ it("captures verified mentor access requests without granting permissions; only 
       .roles,
   ).toEqual(["mentor"]);
 });
-it("launches an isolated kiosk via mentor login, renews the same retry identity, rotates its secret and ends access", async () => {
-  env();
-  const { db } = await fixture();
-  const first = await dispatch(
+async function activate(
+  db: Awaited<ReturnType<typeof fixture>>["db"],
+  cookie?: string,
+) {
+  const issued = await dispatch(
     {
       method: "POST",
-      path: "/api/mentor/kiosk/launch",
+      path: "/api/mentor/kiosk/activation",
       headers: headers(),
       body: {},
     },
     db,
   );
+  expect(issued.statusCode).toBe(201);
+  return dispatch(
+    {
+      method: "POST",
+      path: "/api/kiosk/activate",
+      headers: {
+        origin: "http://localhost:5173",
+        "content-type": "application/json",
+        cookie,
+      },
+      body: { code: JSON.parse(issued.body).code },
+    },
+    db,
+  );
+}
+it("launches an isolated kiosk via mentor login, renews the same retry identity, rotates its secret and ends access", async () => {
+  env();
+  const { db } = await fixture();
+  const first = await activate(db);
   expect(first.statusCode).toBe(200);
   expect([first.headers["set-cookie"]].flat().join(";")).toContain("HttpOnly");
   expect(first.body).not.toContain("credential");
@@ -213,15 +233,7 @@ it("launches an isolated kiosk via mentor login, renews the same retry identity,
       db,
     );
   expect(JSON.parse((await scan()).body).state).toBe("in");
-  const renewed = await dispatch(
-    {
-      method: "POST",
-      path: "/api/mentor/kiosk/launch",
-      headers: { ...headers(), cookie },
-      body: {},
-    },
-    db,
-  );
+  const renewed = await activate(db, cookie);
   expect(JSON.parse(renewed.body).sessionId).toBe(session.sessionId);
   expect(JSON.parse(renewed.body).resumed).toBe(true);
   const nextCookie = [renewed.headers["set-cookie"]]
@@ -283,15 +295,7 @@ it("launches an isolated kiosk via mentor login, renews the same retry identity,
 it("immediately rejects kiosk sessions whose launching mentor loses access", async () => {
   env();
   const { db } = await fixture();
-  const launch = await dispatch(
-    {
-      method: "POST",
-      path: "/api/mentor/kiosk/launch",
-      headers: headers(),
-      body: {},
-    },
-    db,
-  );
+  const launch = await activate(db);
   const cookie = [launch.headers["set-cookie"]]
     .flat()
     .find((value) => value.startsWith("puncher-local-device="))!
@@ -301,4 +305,27 @@ it("immediately rejects kiosk sessions whose launching mentor loses access", asy
     await tx.put({ ...r!, roles: [] });
   });
   await expect(authenticateKiosk({ cookie }, db)).rejects.toThrow("mentor");
+});
+
+it("accepts a kiosk QR once and checks expiry and the issuing mentor's current access", async () => {
+  const { app, db, advance } = await fixture();
+  const issued = await app.issueKioskActivation(mentor);
+  const results = await Promise.allSettled([
+    app.activateKiosk(issued.code),
+    app.activateKiosk(issued.code),
+  ]);
+  const accepted = results.filter((result) => result.status === "fulfilled");
+  expect(accepted).toHaveLength(1);
+  expect(
+    await db.get(key("DEVICE#" + accepted[0].value.sessionId)),
+  ).toMatchObject({ launchedBy: mentor.id, launchedAt: expect.any(String) });
+  const expiring = await app.issueKioskActivation(mentor);
+  advance(121);
+  await expect(app.activateKiosk(expiring.code)).rejects.toThrow("expired");
+  const revoked = await app.issueKioskActivation(mentor);
+  await atomic(db, async (tx) => {
+    const identity = await tx.get(key("IDENTITY#" + mentor.id));
+    await tx.put({ ...identity!, enabled: false });
+  });
+  await expect(app.activateKiosk(revoked.code)).rejects.toThrow("disabled");
 });

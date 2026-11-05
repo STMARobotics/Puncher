@@ -67,11 +67,11 @@ test("mentor session revocation commits with kiosk launch on real DynamoDB", asy
       }),
     ),
   );
-  const launched = await app.launchKiosk(
-    mentor,
-    undefined,
-    "Shop kiosk",
-    token,
+  const issued = await app.issueKioskActivation(mentor);
+  const launched = await app.activateKiosk(issued.code, undefined, token);
+  await assert.rejects(
+    app.activateKiosk(issued.code),
+    /expired or was already used/,
   );
   assert.equal(await db.get(k), undefined);
   assert.equal(

@@ -5,7 +5,9 @@ import { hash, key, row } from "../service/model";
 import { atomic } from "../service/store";
 import { dispatch } from "../service/api";
 import { device as authenticateKiosk } from "../service/auth";
-import { fixture } from "./helpers";
+import { fixture, mentor } from "./helpers";
+import { previewRoster, applyRosterBatch } from "../service/roster-import";
+import { uid } from "../service/model";
 
 const original = { ...process.env };
 afterEach(() => {
@@ -24,6 +26,85 @@ function env() {
 }
 
 describe("server-managed OAuth sessions", () => {
+  it("links a verified roster email to its Google subject and returns only its own barcode", async () => {
+    env();
+    const { db } = await fixture();
+    const email = "alex@stmarobotics.org";
+    const job = await previewRoster(
+      db,
+      mentor,
+      uid(),
+      "Member Name,Member Email,Member Role\nAlex Example," +
+        email +
+        ",MEMBER\n",
+    );
+    const member = await db.get(key("MEMBER#member-a"));
+    await applyRosterBatch(db, mentor, job.importId, 0, [
+      { memberId: "member-a", version: member!.v },
+    ]);
+    const start = await beginOAuth(db);
+    const state = new URL(start.headers.location as string).searchParams.get(
+      "state",
+    )!;
+    const stateCookie = (start.headers["set-cookie"] as string[])[0].split(
+      ";",
+    )[0];
+    const pending = await db.get(key("OAUTH#" + hash(state)));
+    const payload = {
+      sub: "verified-student",
+      iss: "https://accounts.google.com",
+      aud: "test-client",
+      hd: "stmarobotics.org",
+      email,
+      email_verified: true,
+      exp: Date.now() / 1000 + 300,
+      nonce: pending!.nonce,
+      iat: Date.now() / 1000,
+    };
+    const finish = await finishOAuth(
+      { code: "test-code", state },
+      { cookie: stateCookie },
+      db,
+      {
+        secret: async () => "test-secret",
+        exchange: async () =>
+          new Response(JSON.stringify({ id_token: "test-token" })),
+        verify: async () => payload,
+      },
+    );
+    expect(finish.statusCode).toBe(303);
+    const cookie = (finish.headers["set-cookie"] as string[])
+      .find((c) => c.startsWith("puncher-local-session="))!
+      .split(";")[0];
+    const me = await dispatch(
+      { method: "GET", path: "/api/me", headers: { cookie } },
+      db,
+    );
+    expect(JSON.parse(me.body)).toMatchObject({
+      roles: ["student"],
+      memberId: "member-a",
+      barcode: "000123",
+    });
+    expect(await db.get(key("IDENTITY#verified-student"))).toBeUndefined();
+    await expect(
+      human({ authorization: "Bearer recycled-email" }, db, async () => ({
+        ...payload,
+        sub: "different-subject",
+      })),
+    ).rejects.toThrow("review your account link");
+    await atomic(db, async (tx) => {
+      const member = await tx.get(key("MEMBER#member-a"));
+      await tx.put({ ...member!, active: false });
+    });
+    expect(
+      (
+        await dispatch(
+          { method: "GET", path: "/api/me", headers: { cookie } },
+          db,
+        )
+      ).statusCode,
+    ).toBe(403);
+  });
   it("atomically exchanges a persisted mentor session for kiosk-only access", async () => {
     env();
     const { db } = await fixture();
@@ -38,16 +119,31 @@ describe("server-managed OAuth sessions", () => {
       ),
     );
     expect((await human({ cookie }, db)).id).toBe("local-mentor");
-    const launch = await dispatch(
+    const issue = await dispatch(
       {
         method: "POST",
-        path: "/api/mentor/kiosk/launch",
+        path: "/api/mentor/kiosk/activation",
         headers: {
           cookie,
           origin: "http://localhost:5173",
           "content-type": "application/json",
         },
         body: {},
+      },
+      db,
+    );
+    expect(issue.statusCode).toBe(201);
+    expect((await human({ cookie }, db)).id).toBe("local-mentor");
+    const launch = await dispatch(
+      {
+        method: "POST",
+        path: "/api/kiosk/activate",
+        headers: {
+          cookie,
+          origin: "http://localhost:5173",
+          "content-type": "application/json",
+        },
+        body: { code: JSON.parse(issue.body).code },
       },
       db,
     );
@@ -108,7 +204,7 @@ describe("server-managed OAuth sessions", () => {
       const result = await dispatch(
         {
           method: "POST",
-          path: "/api/mentor/kiosk/launch",
+          path: "/api/mentor/kiosk/activation",
           body: {},
           headers: {
             cookie: "puncher-local-session=" + token,

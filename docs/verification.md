@@ -1,5 +1,11 @@
 # VERIFICATION RECORD
 
+## Phone attendance and kiosk QR activation · November 5, 2026
+
+Build and synthesis passed with 76 unit and infrastructure tests. Ten DynamoDB Local tests passed, including consuming an activation code and exchanging the kiosk browser's session atomically. Tests cover verified roster email linkage, subject pinning, inactive accounts, mentor revocation, token expiry and concurrent attempts to redeem a token.
+
+The Chromium flow uses separate mentor, kiosk and student browser sessions. It decodes both rendered images and sends the decoded values as keyboard scanner input. The student clocks in and out using the existing six-digit code. Physical scanner acceptance on phone screens remains to be checked. The shared activity contract check passed.
+
 ## Google group roster CSV · November 5, 2026
 
 Validated the supplied export format with all 19 member rows. The parser accepts the Google group headings, quoted names, a UTF-8 BOM and standard line endings. Repository tests use synthetic members.

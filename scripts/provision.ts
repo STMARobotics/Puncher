@@ -120,7 +120,7 @@ else if (command === "bootstrap-admin") {
     );
   });
   console.log(
-    "Synthetic members: 000123, 000456. Choose Local mentor, then Launch kiosk. Fixture sign-in is enabled only locally.",
+    "Synthetic members: 000123, 000456. Open Start kiosk and generate an activation QR as a local mentor in a separate window. Fixture sign-in is enabled only locally.",
   );
 } else if (command === "map-cards") {
   const mappings = JSON.parse(readFileSync(args[0], "utf8"));

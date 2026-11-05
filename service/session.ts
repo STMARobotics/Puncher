@@ -185,7 +185,7 @@ export async function finishOAuth(
       "Google sign-in could not be verified. Please try again.",
       401,
     );
-    await human(
+    const principal = await human(
       { authorization: `Bearer ${tokens.id_token}` },
       db,
       async () => payload,
@@ -197,6 +197,12 @@ export async function finishOAuth(
       await tx.put(
         row(`SESSION#${hash(sessionToken)}`, "METADATA", {
           sub: payload.sub,
+          ...(principal.rosterEmail
+            ? {
+                rosterEmail: principal.rosterEmail,
+                rosterMemberId: principal.memberId,
+              }
+            : {}),
           expiresAt: expires.toISOString(),
           ttl: Math.floor(expires.getTime() / 1000),
         }),

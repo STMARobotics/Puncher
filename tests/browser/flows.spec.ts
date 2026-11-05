@@ -1,11 +1,19 @@
 import { test, expect } from "@playwright/test";
 async function launchKiosk(page: import("@playwright/test").Page) {
+  const issued = await page.request.post("/api/mentor/kiosk/activation", {
+    headers: {
+      authorization: "Bearer local-mentor",
+      origin: "http://localhost:5173",
+    },
+    data: {},
+  });
+  expect(issued.status()).toBe(201);
   await page.goto("/");
-  await page.getByRole("button", { name: "Local mentor", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Launch kiosk", exact: true })
-    .first()
-    .click();
+  await page.getByRole("link", { name: "Start kiosk" }).click();
+  const scanner = page.getByLabel("Kiosk activation scanner input");
+  await expect(scanner).toBeFocused();
+  await page.keyboard.type((await issued.json()).code);
+  await page.keyboard.press("Enter");
   await expect(page.getByLabel("Student ID scanner input")).toBeFocused();
 }
 test("camera permission denial has a recovery message without awarding hours", async ({
@@ -115,19 +123,17 @@ test("mentor creates an event, adds once, removes with a reason; phone layout wo
   await page.getByRole("button", { name: "Remove", exact: true }).click();
   await expect(page.locator(".list-row")).toHaveCount(0);
 });
-test("home requires mentor login and mentors manage members without a printing or device setup flow", async ({
+test("home offers sign-in and kiosk entry and mentors manage members without a printing or device setup flow", async ({
   page,
 }) => {
   await page.goto("/");
+  await expect(page.getByRole("heading", { name: "SIGN IN" })).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "MENTOR LOG IN" }),
+    page.getByRole("link", { name: "Start kiosk", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Launch kiosk", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Local student", exact: true }),
-  ).toHaveCount(0);
+    page.getByRole("button", { name: "Local member", exact: true }),
+  ).toBeVisible();
   await page
     .getByRole("button", { name: "Local mentor administrator", exact: true })
     .click();
@@ -145,9 +151,7 @@ test("home requires mentor login and mentors manage members without a printing o
   await expect(page.getByLabel("Device credential")).toHaveCount(0);
   await page.screenshot({ path: "work/admin-desktop.png", fullPage: true });
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "MENTOR LOG IN" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "SIGN IN" })).toBeVisible();
   expect(
     (
       await page.request.get("/api/mentor/members", {
@@ -157,12 +161,12 @@ test("home requires mentor login and mentors manage members without a printing o
   ).toBe(403);
 });
 
-test("mentor launch removes mentor authority and ending a kiosk requires a new login", async ({
+test("kiosk activation uses a kiosk-only session and ending it returns to the activation screen", async ({
   page,
 }) => {
   await page.goto("/kiosk");
   await expect(
-    page.getByRole("heading", { name: "KIOSK LOCKED" }),
+    page.getByRole("heading", { name: "Scan kiosk activation code" }),
   ).toBeVisible();
   await expect(page.getByLabel("Device credential")).toHaveCount(0);
   await launchKiosk(page);
@@ -174,12 +178,10 @@ test("mentor launch removes mentor authority and ending a kiosk requires a new l
     ]),
   ).toEqual([0, null]);
   await page.getByRole("button", { name: "End kiosk", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "MENTOR LOG IN" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "SIGN IN" })).toBeVisible();
   await page.goto("/kiosk");
   await expect(
-    page.getByRole("heading", { name: "KIOSK LOCKED" }),
+    page.getByRole("heading", { name: "Scan kiosk activation code" }),
   ).toBeVisible();
 });
 

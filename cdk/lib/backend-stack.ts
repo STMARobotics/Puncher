@@ -219,6 +219,17 @@ export class BackendStack extends cdk.Stack {
     permission(kiosk, ["GetItem", "ConditionCheckItem"], ["IDENTITY#*"]);
     permission(humans, ["GetItem"], ["SESSION#*"]);
     permission(
+      humans,
+      ["GetItem"],
+      ["ROSTER_EMAIL#*", "ROSTER_LOGIN#*", "BINDING#*"],
+    );
+    permission(humans, ["PutItem", "ConditionCheckItem"], ["ROSTER_LOGIN#*"]);
+    permission(
+      humans,
+      ["ConditionCheckItem"],
+      ["IDENTITY#*", "MEMBER#*", "ROSTER_EMAIL#*", "BINDING#*"],
+    );
+    permission(
       staff,
       ["GetItem", "Query", "PutItem", "DeleteItem", "ConditionCheckItem"],
       undefined,
@@ -312,6 +323,7 @@ export class BackendStack extends cdk.Stack {
       integration: kioskIntegration,
     });
     for (const [path, method] of [
+      ["/api/kiosk/activate", http.HttpMethod.POST],
       ["/api/auth/login", http.HttpMethod.GET],
       ["/api/auth/callback", http.HttpMethod.GET],
       ["/api/auth/logout", http.HttpMethod.POST],
