@@ -105,8 +105,6 @@ export class FrontendStack extends cdk.Stack {
             timezone: "America/Chicago",
             statsUrl: c.statsUrl,
             localFixtures: false,
-            rosterSyncAvailable:
-              this.node.tryGetContext("rosterSync") !== undefined,
           }),
         ),
       ],

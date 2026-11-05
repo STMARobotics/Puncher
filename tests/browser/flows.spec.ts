@@ -183,7 +183,7 @@ test("mentor launch removes mentor authority and ending a kiosk requires a new l
   ).toBeVisible();
 });
 
-test("manual roster sync preserves a known member code and exports barcode data for external ID generation", async ({
+test("CSV upload preserves existing codes, creates new members and exports external ID data", async ({
   page,
 }) => {
   await page.goto("/");
@@ -192,44 +192,129 @@ test("manual roster sync preserves a known member code and exports barcode data 
     .getByRole("button", { name: "Manage members", exact: true })
     .first()
     .click();
-  await page.getByRole("button", { name: "Sync roster", exact: true }).click();
   await expect(
-    page.getByRole("status").filter({ hasText: "Sync finished" }),
-  ).toBeVisible({ timeout: 20000 });
+    page.getByRole("button", { name: "Sync roster", exact: true }),
+  ).toHaveCount(0);
+  const csv =
+    "Member Name,Member Email,Member Role\nAlex Example,alex@stmarobotics.org,MEMBER\nJordan Sample,jordan@stmarobotics.org,MEMBER\nCasey Imported,casey.imported@stmarobotics.org,OWNER\n";
+  const upload = () =>
+    page.getByLabel("Google members CSV").setInputFiles({
+      name: "google-members.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv),
+    });
+  await upload();
+  await page.getByRole("button", { name: "Preview CSV", exact: true }).click();
   await expect(
-    page.getByRole("row").filter({ hasText: "Alex Example" }),
+    page.getByRole("heading", { name: "REVIEW 3 MEMBERS" }),
+  ).toBeVisible();
+  await page
+    .getByLabel("Import action for Alex Example")
+    .selectOption({ label: "Alex Example · 000123" });
+  await page
+    .getByLabel("Import action for Jordan Sample")
+    .selectOption({ label: "Jordan Sample · 000456" });
+  await page.getByLabel("Import action for Casey Imported").selectOption("new");
+  await page
+    .getByRole("button", { name: "Import reviewed members", exact: true })
+    .click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Import finished" }),
+  ).toContainText("3 of 3 processed");
+  await expect(
+    page.getByRole("row").filter({
+      has: page.getByRole("cell", { name: "Alex Example", exact: true }),
+    }),
   ).toContainText("000123");
-  const jordan = page.locator(".roster-match").filter({
-    has: page.locator("strong").getByText("Jordan Sample", { exact: true }),
-  });
-  if (await jordan.count()) {
-    await jordan
-      .getByRole("combobox")
-      .selectOption({ label: "Jordan Sample · 000456" });
-    await jordan
-      .getByRole("button", { name: "Link existing", exact: true })
-      .click();
-    await expect(jordan).toHaveCount(0);
-  }
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Export active roster CSV" }).click();
-  const file = await download;
-  const contents = await (
-    await import("node:fs/promises")
-  ).readFile((await file.path())!, "utf8");
+  const file = await download,
+    contents = await (
+      await import("node:fs/promises")
+    ).readFile((await file.path())!, "utf8");
   expect(contents).toContain("name,email,barcode");
   expect(contents).toContain('"000123"');
-  expect(file.suggestedFilename()).toBe("puncher-roster.csv");
+  expect(contents).toContain('"casey.imported@stmarobotics.org"');
+  await upload();
+  await page.getByRole("button", { name: "Preview CSV", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "REVIEW 3 MEMBERS" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Import reviewed members", exact: true })
+    .click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Import finished" }),
+  ).toContainText("0 added, 0 updated, 3 unchanged");
   await page.setViewportSize({ width: 390, height: 844 });
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
-  await page.screenshot({
-    path: "work/mentor-roster-mobile.png",
-    fullPage: true,
+  await page.screenshot({ path: "work/mentor-csv-mobile.png", fullPage: true });
+});
+
+test("a lost CSV batch response resumes without duplicating members", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Local mentor", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage members", exact: true })
+    .first()
+    .click();
+  const csv =
+    "Member Name,Member Email,Member Role\n" +
+    Array.from(
+      { length: 11 },
+      (_, i) =>
+        "Retry Person " + i + ",retry.person" + i + "@stmarobotics.org,MEMBER",
+    ).join("\n");
+  await page.getByLabel("Google members CSV").setInputFiles({
+    name: "retry-members.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(csv),
   });
+  await page.getByRole("button", { name: "Preview CSV", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "REVIEW 11 MEMBERS" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Mark unmatched as new", exact: true })
+    .click();
+  let dropped = false;
+  await page.route("**/api/mentor/roster/imports/*/apply", async (route) => {
+    if (!dropped) {
+      dropped = true;
+      await route.fetch();
+      await route.abort("failed");
+    } else await route.continue();
+  });
+  await page
+    .getByRole("button", { name: "Import reviewed members", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Completed batches are saved",
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "Local mentor", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage members", exact: true })
+    .first()
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Resume import", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Resume import", exact: true })
+    .click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Import finished" }),
+  ).toContainText("11 of 11 processed · 11 added");
+  await expect(
+    page.getByRole("row").filter({ hasText: /Retry Person/ }),
+  ).toHaveCount(11);
 });
 
 test("a pending scan from a different kiosk session stays locked for mentor review", async ({

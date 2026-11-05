@@ -12,12 +12,7 @@ import { row } from "../service/model";
 import { atomic } from "../service/store";
 import { shopTotals } from "../service/shop-totals";
 import { assignCard } from "../service/card-codes";
-import {
-  startRosterSync,
-  runRosterSync,
-  rosterStatus,
-  linkRosterMember,
-} from "../service/roster";
+import { previewRoster, applyRosterBatch } from "../service/roster-import";
 const endpoint = process.env.DYNAMODB_ENDPOINT || "http://127.0.0.1:8000";
 assert.ok(["localhost", "127.0.0.1"].includes(new URL(endpoint).hostname));
 const client = new DynamoDBClient({
@@ -96,32 +91,26 @@ test("mentor session revocation commits with kiosk launch on real DynamoDB", asy
   assert.ok(await db.get(k));
 });
 
-test("roster sync and card replacement preserve canonical attendance on real DynamoDB", async () => {
+test("CSV import and card replacement preserve canonical attendance on real DynamoDB", async () => {
   const { db, app, advance } = await setup({ orgId: "example-team" });
   await app.scan(device, "000123", uid());
   advance(60);
   await app.scan(device, "000123", uid());
   const hours = await all(db, "MEMBER#member-a", { prefix: "SHOP#" });
-  const queue: string[] = [];
-  const jobs = await Promise.all([
-    startRosterSync(db, mentor, async (id) => {
-      queue.push(id);
-    }),
-    startRosterSync(db, mentor, async (id) => {
-      queue.push(id);
-    }),
+  const job = await previewRoster(
+    db,
+    mentor,
+    uid(),
+    "Member Name,Member Email,Member Role\nAlex Example,alex@stmarobotics.org,MEMBER\n",
+  );
+  const before = await db.get(key("MEMBER#member-a"));
+  const selection = [{ memberId: "member-a", version: before!.v }];
+  const batches = await Promise.all([
+    applyRosterBatch(db, mentor, job.importId, 0, selection),
+    applyRosterBatch(db, mentor, job.importId, 0, selection),
   ]);
-  assert.equal(jobs[0].jobId, jobs[1].jobId);
-  await runRosterSync(db, jobs[0].jobId, async () => [
-    {
-      id: "google-alex",
-      email: "alex@stmarobotics.org",
-      displayName: "Alex Example",
-      active: true,
-    },
-  ]);
-  assert.equal((await rosterStatus(db)).status, "completed");
-  await linkRosterMember(db, mentor, "google-alex", "member-a");
+  assert.equal(batches[0].status, "completed");
+  assert.deepEqual(batches[0], batches[1]);
   assert.equal((await db.get(key("MEMBER#member-a")))?.barcode, "000123");
   assert.deepEqual(
     await all(db, "MEMBER#member-a", { prefix: "SHOP#" }),

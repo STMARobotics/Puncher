@@ -18,7 +18,6 @@ type Config = {
   googleClientId: string;
   statsUrl: string;
   localFixtures: boolean;
-  rosterSyncAvailable: boolean;
 };
 type Person = { id: string; roles: string[] };
 function App() {
@@ -198,10 +197,7 @@ function App() {
             )}
           </section>
         ) : page === "members" ? (
-          <MentorConsole
-            administrator={person.roles.includes("admin")}
-            rosterAvailable={config.rosterSyncAvailable}
-          />
+          <MentorConsole administrator={person.roles.includes("admin")} />
         ) : page === "events" || page === "new-event" ? (
           <Events key={page} startCreating={page === "new-event"} />
         ) : (

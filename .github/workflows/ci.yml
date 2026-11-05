@@ -39,8 +39,6 @@ jobs:
       - run: npm run db:init && npm run seed
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
-        env:
-          LOCAL_ROSTER_FIXTURES: "true"
       - uses: actions/upload-artifact@v7
         if: failure()
         with:

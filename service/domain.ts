@@ -369,19 +369,13 @@ export class Puncher {
       await this.livePrincipal(tx, p);
       const k = key(`MEMBER#${id}`);
       const previous = await tx.get(k);
-      if (!previous) {
-        const sync = await tx.get(key("APP#PUNCHER", "ROSTER_SYNC"));
-        assert(
-          !sync ||
-            !["queued", "running"].includes(sync.status) ||
-            sync.leaseUntil <= this.clock().toISOString(),
-          "Wait for the roster sync before adding a manual member.",
-          409,
-        );
-      }
       assert(
-        !input.active || !previous?.directorySuspended,
-        "Reactivate this member in Google before enabling attendance.",
+        !previous?.csvEmail ||
+          input.email === undefined ||
+          (typeof input.email === "string" &&
+            input.email.trim().toLowerCase() === previous.csvEmail),
+        "For a CSV member email change, upload the new address and select the existing member to preserve their history.",
+        409,
       );
       const card = await assignCard(tx, id, requestedCard ?? previous?.barcode);
       if (card !== previous?.barcode) {
@@ -408,7 +402,7 @@ export class Puncher {
           previous && previous.active === input.active
             ? !!previous.manuallyDisabled
             : !input.active,
-        email: previous?.directoryUserId
+        email: previous?.csvEmail
           ? previous.email
           : typeof input.email === "string"
             ? input.email.trim().slice(0, 254)

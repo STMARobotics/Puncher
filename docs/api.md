@@ -16,10 +16,9 @@ All browser writes send JSON and the exact configured Origin. Human routes use a
 | GET / POST | /api/mentor/members | Mentor; safe roster / create with automatic code and optional client-generated memberId UUID for retries |
 | PATCH | /api/mentor/members/{memberId} | Mentor; edit attendance member without changing native ID |
 | POST | /api/mentor/members/{memberId}/replace-card | Mentor; operationId UUID makes replacement idempotent |
-| POST | /api/mentor/roster/sync | Mentor; 202 durable background job; requires configured connection |
-| GET | /api/mentor/roster/status | Mentor; job status/counts |
-| GET | /api/mentor/roster/pending | Mentor; unresolved directory candidates |
-| POST | /api/mentor/roster/link | Mentor; explicit existing member or confirmed new member |
+| POST | /api/mentor/roster/imports | Mentor. Validate CSV and stage preview with `{importId,csv}`. |
+| GET | /api/mentor/roster/imports/{importId} | Uploading mentor. Preview, selected matches and progress. |
+| POST | /api/mentor/roster/imports/{importId}/apply | Uploading mentor. Apply a batch with cursor and the initial reviewed selections. Retries return saved progress. |
 | GET | /api/admin/mentor-requests | Administrator; verified Google login requests |
 | POST | /api/admin/mentor-requests/{subject}/approve | Administrator; grants mentor plus explicitly selected extra permissions |
 | GET | /api/kiosk/status | Kiosk session availability |

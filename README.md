@@ -1,6 +1,6 @@
 # PUNCHER
 
-Mentor login, roster sync and external ID cards: [mentor workflow and Google setup](docs/mentor-roster.md).
+For mentor login, roster CSV uploads and external ID cards, see the [mentor workflow](docs/mentor-roster.md).
 
 Cross-app integration foundation and rollout: [app harmonization](docs/app-harmonization.md).
 

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api } from "./api";
+import { RosterUpload } from "./roster-upload";
 
 export function rosterCsv(members: any[]) {
   const cell = (value: unknown, protectFormula = true) => {
@@ -28,13 +29,7 @@ function downloadRoster(members: any[]) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-export function MentorConsole({
-  administrator,
-  rosterAvailable,
-}: {
-  administrator: boolean;
-  rosterAvailable: boolean;
-}) {
+export function MentorConsole({ administrator }: { administrator: boolean }) {
   const [tab, setTab] = useState("members");
   return (
     <>
@@ -57,7 +52,7 @@ export function MentorConsole({
         ))}
       </nav>
       {tab === "members" ? (
-        <Members rosterAvailable={rosterAvailable} />
+        <Members />
       ) : tab === "kiosks" ? (
         <KioskSessions />
       ) : tab === "mentor access" ? (
@@ -68,7 +63,7 @@ export function MentorConsole({
     </>
   );
 }
-function Members({ rosterAvailable }: { rosterAvailable: boolean }) {
+function Members() {
   const empty = () => ({
     memberId: crypto.randomUUID(),
     displayName: "",
@@ -77,25 +72,14 @@ function Members({ rosterAvailable }: { rosterAvailable: boolean }) {
     active: true,
   });
   const [members, setMembers] = useState<any[]>([]),
-    [pending, setPending] = useState<any[]>([]),
-    [job, setJob] = useState<any>({ status: "idle" }),
     [form, setForm] = useState<any>(empty),
     [editing, setEditing] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
-    [message, setMessage] = useState(""),
-    [links, setLinks] = useState<Record<string, string>>({});
-  const working = ["queued", "running"].includes(job.status);
+    [message, setMessage] = useState("");
   async function refresh() {
     try {
-      const [m, candidates, current] = await Promise.all([
-        api("/mentor/members"),
-        api("/mentor/roster/pending"),
-        api("/mentor/roster/status"),
-      ]);
-      setMembers(m);
-      setPending(candidates);
-      setJob(current);
+      setMembers(await api("/mentor/members"));
     } catch (e: any) {
       setError(e.message);
     }
@@ -103,48 +87,6 @@ function Members({ rosterAvailable }: { rosterAvailable: boolean }) {
   useEffect(() => {
     void refresh();
   }, []);
-  useEffect(() => {
-    if (!working) return;
-    let disposed = false;
-    const deadline = Date.now() + 6 * 60000;
-    const timer = setInterval(async () => {
-      if (Date.now() > deadline) {
-        clearInterval(timer);
-        setMessage("Sync is still running. Use Refresh to check progress.");
-        return;
-      }
-      try {
-        const current = await api("/mentor/roster/status");
-        if (disposed) return;
-        setJob(current);
-        if (!["queued", "running"].includes(current.status)) {
-          clearInterval(timer);
-          void refresh();
-        }
-      } catch (e: any) {
-        if (!disposed) {
-          setError(e.message);
-          clearInterval(timer);
-        }
-      }
-    }, 2000);
-    return () => {
-      disposed = true;
-      clearInterval(timer);
-    };
-  }, [working, job.jobId]);
-  async function sync() {
-    setBusy(true);
-    setError("");
-    setMessage("");
-    try {
-      setJob(await api("/mentor/roster/sync", {}));
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -158,31 +100,6 @@ function Members({ rosterAvailable }: { rosterAvailable: boolean }) {
       setForm(empty());
       setEditing(false);
       setMessage("Member saved. The card code is assigned automatically.");
-      await refresh();
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function link(candidate: any, createNew = false) {
-    if (
-      createNew &&
-      !confirm(
-        "Create a new member for " +
-          candidate.displayName +
-          "? Choose Link existing if this person already has attendance records.",
-      )
-    )
-      return;
-    setBusy(true);
-    setError("");
-    try {
-      await api("/mentor/roster/link", {
-        directoryId: candidate.directoryId,
-        memberId: createNew ? undefined : links[candidate.directoryId],
-        createNew,
-      });
       await refresh();
     } catch (e: any) {
       setError(e.message);
@@ -220,14 +137,11 @@ function Members({ rosterAvailable }: { rosterAvailable: boolean }) {
   }
   return (
     <>
+      <RosterUpload members={members} onComplete={refresh} />
       <section className="panel">
         <div className="mentor-actions">
-          <button disabled={busy || working || !rosterAvailable} onClick={sync}>
-            {working ? "Syncing roster…" : "Sync roster"}
-          </button>
           <button
-            className="secondary"
-            disabled={working || !members.some((m) => m.active && m.barcode)}
+            disabled={!members.some((m) => m.active && m.barcode)}
             onClick={() => downloadRoster(members)}
           >
             Export active roster CSV
@@ -236,31 +150,6 @@ function Members({ rosterAvailable }: { rosterAvailable: boolean }) {
             Refresh
           </button>
         </div>
-        {!rosterAvailable && (
-          <p className="muted">
-            Google roster sync needs one-time Google Workspace administrator
-            setup.
-          </p>
-        )}
-        {working && (
-          <p role="status">
-            {job.status === "queued"
-              ? "Roster sync queued."
-              : "Updating the Google roster…"}
-          </p>
-        )}
-        {job.status === "completed" && (
-          <p role="status">
-            Sync finished: {job.counts?.created ?? 0} added,{" "}
-            {job.counts?.updated ?? 0} updated, {job.counts?.disabled ?? 0}{" "}
-            disabled, {job.counts?.needsLink ?? 0} need linking.
-          </p>
-        )}
-        {job.status === "failed" && (
-          <p role="alert" className="error">
-            {job.error}
-          </p>
-        )}
         {error && (
           <p role="alert" className="error">
             {error}
@@ -268,54 +157,6 @@ function Members({ rosterAvailable }: { rosterAvailable: boolean }) {
         )}
         {message && <p role="status">{message}</p>}
       </section>
-      {pending.length > 0 && (
-        <section className="panel">
-          <h2>LINK EXISTING MEMBERS</h2>
-          <p>
-            Match existing members once to preserve their hours and card codes.
-            Names are never linked automatically.
-          </p>
-          {pending.map((candidate) => (
-            <div className="roster-match" key={candidate.directoryId}>
-              <strong>{candidate.displayName}</strong>
-              <span>{candidate.email}</span>
-              <select
-                aria-label={"Existing member for " + candidate.displayName}
-                value={links[candidate.directoryId] ?? ""}
-                onChange={(e) =>
-                  setLinks({
-                    ...links,
-                    [candidate.directoryId]: e.target.value,
-                  })
-                }
-              >
-                <option value="">Choose existing member</option>
-                {members
-                  .filter((m) => !m.directoryManaged)
-                  .map((m) => (
-                    <option key={m.memberId} value={m.memberId}>
-                      {m.displayName}
-                      {m.barcode ? " · " + m.barcode : ""}
-                    </option>
-                  ))}
-              </select>
-              <button
-                disabled={busy || working || !links[candidate.directoryId]}
-                onClick={() => link(candidate)}
-              >
-                Link existing
-              </button>
-              <button
-                className="secondary"
-                disabled={busy || working}
-                onClick={() => link(candidate, true)}
-              >
-                Create new member
-              </button>
-            </div>
-          ))}
-        </section>
-      )}
       <section className="panel">
         <h2>{editing ? "EDIT MEMBER" : "ADD MEMBER"}</h2>
         <form className="form-grid" onSubmit={save}>
@@ -335,7 +176,7 @@ function Members({ rosterAvailable }: { rosterAvailable: boolean }) {
             <input
               type="email"
               value={form.email ?? ""}
-              readOnly={!!form.directoryManaged}
+              readOnly={!!form.csvManaged}
               onChange={(e) => setForm({ ...form, email: e.target.value })}
             />
           </label>
@@ -353,7 +194,6 @@ function Members({ rosterAvailable }: { rosterAvailable: boolean }) {
             <input
               type="checkbox"
               checked={form.active}
-              disabled={!!form.directorySuspended}
               onChange={(e) => setForm({ ...form, active: e.target.checked })}
             />
             Active for attendance
@@ -363,7 +203,7 @@ function Members({ rosterAvailable }: { rosterAvailable: boolean }) {
               Card code: <strong>{form.barcode ?? "Assigned on save"}</strong>
             </p>
           )}
-          <button disabled={busy || working}>
+          <button disabled={busy}>
             {editing ? "Save member" : "Add member"}
           </button>
           {editing && (
@@ -399,13 +239,7 @@ function Members({ rosterAvailable }: { rosterAvailable: boolean }) {
                   <td>{m.displayName}</td>
                   <td>{m.email ?? "—"}</td>
                   <td>{m.barcode ?? "Unassigned"}</td>
-                  <td>
-                    {m.directorySuspended
-                      ? "Disabled in Google"
-                      : m.active
-                        ? "Active"
-                        : "Inactive"}
-                  </td>
+                  <td>{m.active ? "Active" : "Inactive"}</td>
                   <td>
                     <button
                       className="quiet"
@@ -418,7 +252,7 @@ function Members({ rosterAvailable }: { rosterAvailable: boolean }) {
                     </button>
                     <button
                       className="quiet"
-                      disabled={busy || working}
+                      disabled={busy}
                       onClick={() => replace(m)}
                     >
                       Replace card code

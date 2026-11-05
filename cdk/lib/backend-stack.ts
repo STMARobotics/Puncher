@@ -13,8 +13,6 @@ import {
   aws_cloudwatch as cw,
   aws_sns as sns,
   aws_cloudwatch_actions as actions,
-  aws_secretsmanager as secrets,
-  aws_lambda_event_sources as eventSources,
 } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import { resolve } from "node:path";
@@ -77,9 +75,7 @@ export class BackendStack extends cdk.Stack {
         runtime: lambda.Runtime.NODEJS_24_X,
         architecture: lambda.Architecture.ARM_64,
         memorySize: 512,
-        timeout: cdk.Duration.seconds(
-          name === "Cleanup" ? 900 : name === "RosterSync" ? 300 : 25,
-        ),
+        timeout: cdk.Duration.seconds(name === "Cleanup" ? 900 : 25),
         logGroup,
         bundling: {
           format: nodejs.OutputFormat.CJS,
@@ -273,95 +269,6 @@ export class BackendStack extends cdk.Stack {
         ...activityOutboxPrefixes(this, "puncher"),
       ],
     );
-    // Roster sync is a mentor-triggered job, never a schedule. Keep the Google
-    // credential on the worker only; the HTTP handler can only enqueue jobs.
-    const roster = this.node.tryGetContext("rosterSync");
-    if (roster !== undefined) {
-      if (
-        !roster ||
-        roster.domain !== "stmarobotics.org" ||
-        !/^[^@\s]+@stmarobotics\.org$/.test(roster.delegatedAdminEmail ?? "") ||
-        typeof roster.credentialsSecretArn !== "string" ||
-        !roster.credentialsSecretArn.startsWith(
-          `arn:aws:secretsmanager:${this.region}:${this.account}:secret:`,
-        )
-      )
-        throw new Error(
-          "rosterSync requires the robotics domain, a delegated administrator and a same-account/region Secrets Manager ARN.",
-        );
-      const failures = new sqs.Queue(this, "RosterFailures", {
-        fifo: true,
-        enforceSSL: true,
-        encryption: sqs.QueueEncryption.SQS_MANAGED,
-        retentionPeriod: cdk.Duration.days(14),
-      });
-      const queue = new sqs.Queue(this, "RosterQueue", {
-        fifo: true,
-        enforceSSL: true,
-        encryption: sqs.QueueEncryption.SQS_MANAGED,
-        visibilityTimeout: cdk.Duration.minutes(30),
-        retentionPeriod: cdk.Duration.days(4),
-        deadLetterQueue: { queue: failures, maxReceiveCount: 3 },
-      });
-      const worker = create(
-        "RosterSync",
-        "service/roster-worker.ts",
-        "handler",
-        {
-          GOOGLE_ROSTER_DOMAIN: roster.domain,
-          GOOGLE_ROSTER_DELEGATED_ADMIN: roster.delegatedAdminEmail,
-          GOOGLE_ROSTER_SECRET_ARN: roster.credentialsSecretArn,
-        },
-      );
-      (
-        worker.node.defaultChild as lambda.CfnFunction
-      ).reservedConcurrentExecutions = 1;
-      worker.addEventSource(
-        new eventSources.SqsEventSource(queue, {
-          batchSize: 1,
-          reportBatchItemFailures: true,
-        }),
-      );
-      secrets.Secret.fromSecretCompleteArn(
-        this,
-        "RosterCredential",
-        roster.credentialsSecretArn,
-      ).grantRead(worker);
-      staff.addEnvironment("ROSTER_SYNC_QUEUE_URL", queue.queueUrl);
-      queue.grantSendMessages(staff);
-      permission(worker, ["GetItem", "ConditionCheckItem"], ["IDENTITY#*"]);
-      permission(
-        worker,
-        ["GetItem", "PutItem", "DeleteItem", "ConditionCheckItem"],
-        [
-          "APP#PUNCHER",
-          "DIRECTORY#*",
-          "ROSTER#PENDING",
-          "MEMBER#*",
-          "CARD#*",
-          "CARDCODE#*",
-          "AUDIT",
-        ],
-      );
-      permission(worker, ["GetItem", "ConditionCheckItem"], ["BINDING#*"]);
-      worker.addToRolePolicy(
-        new iam.PolicyStatement({
-          actions: ["dynamodb:Query"],
-          resources: [this.table.tableArn, `${this.table.tableArn}/index/GSI1`],
-          conditions: {
-            "ForAllValues:StringLike": {
-              "dynamodb:LeadingKeys": ["MEMBERS", "ROSTER#PENDING"],
-            },
-          },
-        }),
-      );
-      new cw.Alarm(this, "RosterDeadLetters", {
-        metric: failures.metricApproximateNumberOfMessagesVisible(),
-        threshold: 1,
-        evaluationPeriods: 1,
-        treatMissingData: cw.TreatMissingData.NOT_BREACHING,
-      }).addAlarmAction(new actions.SnsAction(topic));
-    }
     const humanAuth = new auth.HttpLambdaAuthorizer("HumanAuth", humans, {
       identitySource: ["$request.header.Cookie"],
       responseTypes: [auth.HttpLambdaResponseType.SIMPLE],

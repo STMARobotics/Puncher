@@ -8,12 +8,10 @@ import {
   sessionCookieName,
 } from "./auth";
 import {
-  startRosterSync,
-  rosterStatus,
-  pendingRoster,
-  linkRosterMember,
-} from "./roster";
-import { enqueueRosterSync } from "./roster-queue";
+  previewRoster,
+  rosterImportStatus,
+  applyRosterBatch,
+} from "./roster-import";
 import { store, runtime, publicConfig } from "./runtime";
 import { all, atomic, type Store } from "./store";
 import { Fault, assert, admin, mentor, owns, key, hash } from "./model";
@@ -44,11 +42,7 @@ const response = (
   } as Record<string, string | string[]>,
   body: JSON.stringify(body),
 });
-export async function dispatch(
-  req: Request,
-  db: Store = store(),
-  dependencies: { enqueueRoster?: (id: string) => Promise<void> } = {},
-) {
+export async function dispatch(req: Request, db: Store = store()) {
   try {
     const c = runtime();
     const cooldown = Number(process.env.SCAN_COOLDOWN_SECONDS || 5);
@@ -212,35 +206,22 @@ export async function dispatch(
     const sessionToEnd = path.match(/^\/api\/mentor\/kiosks\/([^/]+)$/);
     if (sessionToEnd && method === "DELETE")
       return response(200, await app.revokeDevice(p, sessionToEnd[1]));
-    if (path === "/api/mentor/roster/sync" && method === "POST") {
-      assert(
-        publicConfig().rosterSyncAvailable,
-        "Google roster sync needs one-time Google Workspace administrator setup.",
-        503,
-      );
-      return response(
-        202,
-        await startRosterSync(
-          db,
-          p,
-          dependencies.enqueueRoster ?? enqueueRosterSync,
-        ),
-      );
-    }
-    if (path === "/api/mentor/roster/status" && method === "GET")
-      return response(200, await rosterStatus(db));
-    if (path === "/api/mentor/roster/pending" && method === "GET")
-      return response(200, await pendingRoster(db));
-    if (path === "/api/mentor/roster/link" && method === "POST")
+    if (path === "/api/mentor/roster/imports" && method === "POST")
+      return response(201, await previewRoster(db, p, b.importId, b.csv));
+    const csvImport = path.match(
+      /^\/api\/mentor\/roster\/imports\/([^/]+)(?:\/(apply))?$/,
+    );
+    if (csvImport && method === "GET" && !csvImport[2])
+      return response(200, await rosterImportStatus(db, p, csvImport[1]));
+    if (csvImport && method === "POST" && csvImport[2])
       return response(
         200,
-        await linkRosterMember(
-          db,
-          p,
-          b.directoryId,
-          b.memberId,
-          b.createNew === true,
-        ),
+        await applyRosterBatch(db, p, csvImport[1], b.cursor, b.selections),
+      );
+    if (path.startsWith("/api/mentor/roster/"))
+      throw new Fault(
+        410,
+        "Use Upload members CSV in mentor tools. Google directory sync has been retired.",
       );
     if (path === "/api/mentor/members" && method === "GET")
       return response(
@@ -253,8 +234,8 @@ export async function dispatch(
             active,
             memberKind,
             barcode,
-            directoryUserId,
-            directorySuspended,
+            csvEmail,
+            v,
           }) => ({
             memberId,
             displayName,
@@ -262,8 +243,8 @@ export async function dispatch(
             active,
             memberKind,
             barcode,
-            directoryManaged: !!directoryUserId,
-            directorySuspended,
+            csvManaged: !!csvEmail,
+            version: v,
           }),
         ),
       );
