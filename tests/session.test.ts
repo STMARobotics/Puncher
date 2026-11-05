@@ -30,6 +30,82 @@ function env() {
 }
 
 describe("server-managed OAuth sessions", () => {
+  it("lets only admins invite an existing roster member and binds the grant to their verified email", async () => {
+    env();
+    const { db } = await fixture();
+    process.env.LOCAL_AUTH_FIXTURES = "true";
+    const inviteRequest = (actor: string) =>
+      dispatch(
+        {
+          method: "POST",
+          path: "/api/admin/members/member-a/invite-admin",
+          headers: {
+            authorization: "Bearer " + actor,
+            origin: "http://localhost:5173",
+            "content-type": "application/json",
+          },
+          body: { email: "alex@stmarobotics.org" },
+        },
+        db,
+      );
+    expect((await inviteRequest("local-mentor")).statusCode).toBe(403);
+    const issued = await inviteRequest("local-admin");
+    expect(issued.statusCode).toBe(201);
+    const invite = new URL(JSON.parse(issued.body).path, "http://localhost:5173");
+    const query = Object.fromEntries(invite.searchParams);
+    const identityKey = key("IDENTITY#alex-subject");
+    const signIn = async (email: string) => {
+      const start = await dispatch(
+        { method: "GET", path: invite.pathname, query, headers: {} },
+        db,
+      );
+      const state = new URL(start.headers.location as string).searchParams.get(
+        "state",
+      )!;
+      const cookie = (start.headers["set-cookie"] as string[])[0].split(";")[0];
+      const pending = await db.get(key("OAUTH#" + hash(state)));
+      return finishGoogleSignIn({ code: "test-code", state }, { cookie }, db, {
+        secret: async () => "test-secret",
+        exchange: async () => Response.json({ id_token: "test-token" }),
+        verify: async () => ({
+          sub: "alex-subject",
+          iss: "accounts.google.com",
+          aud: "test-client",
+          hd: "stmarobotics.org",
+          email,
+          email_verified: true,
+          exp: Date.now() / 1000 + 300,
+          iat: Date.now() / 1000,
+          nonce: pending!.nonce,
+        }),
+      });
+    };
+    expect(await db.get(identityKey)).toBeUndefined();
+    expect((await signIn("other@stmarobotics.org")).statusCode).toBe(403);
+    expect(await db.get(identityKey)).toBeUndefined();
+    const emailClaim = key("ROSTER_EMAIL#" + hash("alex@stmarobotics.org"));
+    const otherLogin = key("ROSTER_LOGIN#member-b");
+    await atomic(db, async (tx) => {
+      await tx.put(row(emailClaim.pk, emailClaim.sk, { memberId: "member-b" }));
+      await tx.put(row(otherLogin.pk, otherLogin.sk, { sub: "alex-subject" }));
+    });
+    expect((await signIn("alex@stmarobotics.org")).statusCode).toBe(409);
+    expect(await db.get(identityKey)).toBeUndefined();
+    await atomic(db, async (tx) => {
+      await tx.del(emailClaim);
+      await tx.del(otherLogin);
+    });
+    expect((await signIn("alex@stmarobotics.org")).statusCode).toBe(303);
+    expect(await db.get(identityKey)).toMatchObject({
+      memberId: "member-a",
+      roles: ["admin"],
+      enabled: true,
+    });
+    expect((await db.get(key("MEMBER#member-a")))?.barcode).toBe("000123");
+    expect(await db.get(key("MENTOR_REQUEST#alex-subject"))).toBeUndefined();
+    expect((await signIn("alex@stmarobotics.org")).statusCode).toBe(403);
+  });
+
   it("links a verified roster email to its Google subject and returns only its own barcode", async () => {
     env();
     const { db } = await fixture();
@@ -88,6 +164,7 @@ describe("server-managed OAuth sessions", () => {
       barcode: "000123",
     });
     expect(await db.get(key("IDENTITY#verified-student"))).toBeUndefined();
+    expect(await db.get(key("MENTOR_REQUEST#verified-student"))).toBeUndefined();
     await expect(
       human({ authorization: "Bearer recycled-email" }, db, async () => ({
         ...payload,

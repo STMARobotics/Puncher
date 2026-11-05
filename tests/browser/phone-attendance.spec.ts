@@ -102,7 +102,7 @@ test("a mentor phone activates an anonymous kiosk and a member phone clocks atte
       .locator(".scan-panel")
       .evaluate((el) => el.getBoundingClientRect().height);
     await expect(
-      member.getByRole("button", { name: "Manage students" }),
+      member.getByRole("button", { name: "Manage members" }),
     ).toHaveCount(0);
     const presence = await (
       await kiosk.request.get("/api/kiosk/occupants")

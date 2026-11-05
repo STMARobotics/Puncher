@@ -148,12 +148,12 @@ test("home offers sign-in and kiosk entry and mentors manage members without a p
       .getByRole("navigation", { name: "Main navigation" })
       .getByRole("button"),
   ).toHaveText([
-    "Manage students",
+    "Manage members",
     "Create a volunteer event",
     "Generate kiosk activation QR",
   ]);
   await page
-    .getByRole("button", { name: "Manage students", exact: true })
+    .getByRole("button", { name: "Manage members", exact: true })
     .first()
     .click();
   const member = page.getByRole("row").filter({ hasText: "Alex Example" });
@@ -204,7 +204,7 @@ test("CSV upload preserves existing codes, creates new members and exports exter
   await page.goto("/");
   await page.getByRole("button", { name: "Local mentor", exact: true }).click();
   await page
-    .getByRole("button", { name: "Manage students", exact: true })
+    .getByRole("button", { name: "Manage members", exact: true })
     .first()
     .click();
   await expect(
@@ -289,7 +289,7 @@ test("a lost CSV batch response resumes without duplicating members", async ({
   await page.goto("/");
   await page.getByRole("button", { name: "Local mentor", exact: true }).click();
   await page
-    .getByRole("button", { name: "Manage students", exact: true })
+    .getByRole("button", { name: "Manage members", exact: true })
     .first()
     .click();
   const csv =
@@ -328,7 +328,7 @@ test("a lost CSV batch response resumes without duplicating members", async ({
   await page.reload();
   await page.getByRole("button", { name: "Local mentor", exact: true }).click();
   await page
-    .getByRole("button", { name: "Manage students", exact: true })
+    .getByRole("button", { name: "Manage members", exact: true })
     .first()
     .click();
   await expect(

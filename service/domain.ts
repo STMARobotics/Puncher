@@ -24,6 +24,7 @@ import {
   eligible,
 } from "./model";
 const shopClockKey = (day: string) => key("SHOP_CLOCK#" + day);
+const adminInviteKey = (memberId: string) => key("ADMIN_INVITE#" + memberId);
 
 function staffedMillis(shop: Row | undefined, now: number) {
   return (
@@ -616,6 +617,131 @@ export class Puncher {
     admin(p);
     return this.launchKiosk(p, undefined, label);
   }
+  async inviteAdministrator(p: Principal, memberId: string, value: unknown) {
+    admin(p);
+    const email = text(value, "Google email", 254).toLowerCase();
+    assert(
+      /^[^@\s]+@stmarobotics\.org$/.test(email),
+      "Use a stmarobotics.org email.",
+    );
+    const token = randomBytes(32).toString("base64url");
+    return atomic(this.store, async (tx) => {
+      await this.livePrincipal(tx, p);
+      const member = await tx.get(key("MEMBER#" + memberId));
+      assert(member?.active, "Choose an active roster entry.", 409);
+      const rosterEmail = member.email?.trim().toLowerCase() || undefined;
+      assert(
+        !rosterEmail || rosterEmail === email,
+        "Use the Google email on this roster entry.",
+        409,
+      );
+      const inviteKey = adminInviteKey(memberId);
+      await tx.put(
+        row(inviteKey.pk, inviteKey.sk, {
+          email,
+          rosterEmail,
+          tokenHash: hash(token),
+          invitedBy: p.id,
+          ttl: Math.floor(this.clock().getTime() / 1000) + 24 * 60 * 60,
+        }),
+      );
+      await this.audit(tx, p, "identity.admin_invited", memberId);
+      const query = new URLSearchParams({ member: memberId, invite: token });
+      return { path: "/api/auth/login?" + query };
+    });
+  }
+  async acceptAdministratorInvite(
+    memberId: string,
+    tokenHash: string,
+    google: { sub: string; email: string },
+  ) {
+    return atomic(this.store, async (tx) => {
+      const inviteKey = adminInviteKey(memberId);
+      const invite = await tx.get(inviteKey);
+      assert(
+        invite?.tokenHash === tokenHash &&
+          invite.ttl > Math.floor(this.clock().getTime() / 1000),
+        "This administrator invitation is invalid or expired.",
+        403,
+      );
+      const email = google.email.toLowerCase();
+      assert(
+        email === invite.email,
+        "Sign in with the invited Google account.",
+        403,
+      );
+      const grantor = await tx.get(key("IDENTITY#" + invite.invitedBy));
+      const grantorMember = grantor?.memberId
+        ? await tx.get(key("MEMBER#" + grantor.memberId))
+        : undefined;
+      assert(
+        grantor?.enabled &&
+          grantor.roles?.includes("admin") &&
+          (!grantor.memberId || grantorMember?.active),
+        "This administrator invitation is no longer valid.",
+        403,
+      );
+      const member = await tx.get(key("MEMBER#" + memberId));
+      assert(
+        member?.active &&
+          (member.email?.trim().toLowerCase() || undefined) === invite.rosterEmail,
+        "The roster entry changed. Ask an administrator for a new invitation.",
+        409,
+      );
+      const identityKey = key("IDENTITY#" + google.sub);
+      const bindingKey = key("BINDING#" + memberId);
+      const [identity, binding, login, directory, rosterClaim] = await Promise.all([
+        tx.get(identityKey),
+        tx.get(bindingKey),
+        tx.get(key("ROSTER_LOGIN#" + memberId)),
+        tx.get(key("DIRECTORY#" + google.sub)),
+        tx.get(key("ROSTER_EMAIL#" + hash(email))),
+      ]);
+      const otherRosterLogin =
+        !identity?.memberId &&
+        rosterClaim?.memberId &&
+        rosterClaim.memberId !== memberId
+          ? await tx.get(key("ROSTER_LOGIN#" + rosterClaim.memberId))
+          : undefined;
+      assert(
+        !identity || identity.enabled,
+        "Your Puncher access is disabled.",
+        403,
+      );
+      assert(
+        (!identity?.memberId || identity.memberId === memberId) &&
+          (!directory || directory.memberId === memberId) &&
+          otherRosterLogin?.sub !== google.sub &&
+          (!binding || binding.googleSub === google.sub) &&
+          (!login || login.sub === google.sub) &&
+          (!member.directoryUserId || member.directoryUserId === google.sub),
+        "This Google account and roster entry have conflicting links. Ask an administrator to review them.",
+        409,
+      );
+      await tx.put(row(bindingKey.pk, bindingKey.sk, { googleSub: google.sub }));
+      await tx.put({
+        ...identity,
+        ...row(identityKey.pk, identityKey.sk, {
+          googleSub: google.sub,
+          email,
+          displayName: identity?.displayName ?? member.displayName,
+          memberId,
+          enabled: true,
+          roles: [...new Set([...(identity?.roles ?? []), "admin"])],
+          gsi1pk: "IDENTITIES",
+          gsi1sk: google.sub,
+        }),
+      });
+      await tx.del(inviteKey);
+      await this.audit(
+        tx,
+        { kind: "human", id: invite.invitedBy, roles: ["admin"] },
+        "identity.admin_granted",
+        google.sub,
+        { memberId },
+      );
+    });
+  }
   async approveMentor(
     p: Principal,
     sub: string,
@@ -629,7 +755,7 @@ export class Puncher {
         request = await tx.get(requestKey);
       assert(
         request && request.ttl > this.clock().getTime() / 1000,
-        "Mentor request expired or not found. Ask them to sign in again.",
+        "Mentor request expired or not found.",
         404,
       );
       const k = key("IDENTITY#" + sub),

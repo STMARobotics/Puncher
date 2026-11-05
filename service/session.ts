@@ -1,12 +1,14 @@
 import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
+  assertGoogleIdentity,
   human,
   cookieValue,
   sessionCookieName,
   verifyGoogle,
   type Verify,
 } from "./auth";
+import { Puncher } from "./domain";
 import { type Store, atomic } from "./store";
 import { assert, Fault, hash, key, row } from "./model";
 import { runtime } from "./runtime";
@@ -73,9 +75,18 @@ async function clientSecret() {
   return cachedSecret;
 }
 
-export async function beginGoogleSignIn(db: Store): Promise<HttpResult> {
+export async function beginGoogleSignIn(
+  db: Store,
+  query: { member?: string; invite?: string } = {},
+): Promise<HttpResult> {
   const c = runtime();
   assert(c.googleClientId, "Google sign-in is not configured.", 503);
+  const { member, invite } = query;
+  if (member !== undefined || invite !== undefined)
+    assert(
+      member && member.length <= 254 && invite && /^[\w-]{43}$/.test(invite),
+      "Invalid administrator invitation.",
+    );
   const state = randomBytes(32).toString("base64url");
   const verifier = randomBytes(32).toString("base64url");
   const challenge = createHash("sha256").update(verifier).digest("base64url");
@@ -86,6 +97,9 @@ export async function beginGoogleSignIn(db: Store): Promise<HttpResult> {
       row(`OAUTH#${hash(state)}`, "METADATA", {
         verifier,
         nonce,
+        ...(member && invite && {
+          adminInvite: { memberId: member, tokenHash: hash(invite) },
+        }),
         expiresAt,
         ttl: Math.floor(Date.now() / 1000) + OAUTH_SECONDS,
       }),
@@ -102,6 +116,7 @@ export async function beginGoogleSignIn(db: Store): Promise<HttpResult> {
     code_challenge: challenge,
     code_challenge_method: "S256",
     hd: "stmarobotics.org",
+    ...(invite && { prompt: "select_account" }),
   }).toString();
   return redirect(url.toString(), [
     cookie(STATE_COOKIE(c.local), state, OAUTH_SECONDS, c.local),
@@ -185,6 +200,15 @@ export async function finishGoogleSignIn(
       "Google sign-in could not be verified. Please try again.",
       401,
     );
+    if (pending.adminInvite) {
+      assertGoogleIdentity(payload, c.googleClientId);
+      const { memberId, tokenHash } = pending.adminInvite;
+      await new Puncher(db, options.now).acceptAdministratorInvite(
+        memberId,
+        tokenHash,
+        payload,
+      );
+    }
     const principal = await human(
       { authorization: `Bearer ${tokens.id_token}` },
       db,

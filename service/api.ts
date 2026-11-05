@@ -93,7 +93,7 @@ export async function dispatch(req: Request, db: Store = store()) {
       return response(200, { status: "ok", schemaVersion: 1 });
     }
     if (method === "GET" && path === "/api/auth/login")
-      return beginGoogleSignIn(db);
+      return beginGoogleSignIn(db, req.query);
     if (method === "GET" && path === "/api/auth/callback")
       return finishGoogleSignIn(req.query || {}, headers, db);
     if (method !== "GET") {
@@ -407,6 +407,14 @@ export async function dispatch(req: Request, db: Store = store()) {
       );
     if (path === "/api/admin/members" && method === "POST")
       return response(201, await app.saveMember(p, b));
+    const adminInvite = path.match(
+      /^\/api\/admin\/members\/([^/]+)\/invite-admin$/,
+    );
+    if (adminInvite && method === "POST")
+      return response(
+        201,
+        await app.inviteAdministrator(p, adminInvite[1], b.email),
+      );
     const member = path.match(/^\/api\/admin\/members\/([^/]+)$/);
     if (member && method === "PATCH")
       return response(200, await app.saveMember(p, b, member[1]));
