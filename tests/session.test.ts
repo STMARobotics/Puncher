@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { human } from "../service/auth";
-import { beginOAuth, endSession, finishOAuth } from "../service/session";
+import {
+  beginGoogleSignIn,
+  endSession,
+  finishGoogleSignIn,
+} from "../service/session";
 import { hash, key, row } from "../service/model";
 import { atomic } from "../service/store";
 import { dispatch } from "../service/api";
@@ -42,7 +46,7 @@ describe("server-managed OAuth sessions", () => {
     await applyRosterBatch(db, mentor, job.importId, 0, [
       { memberId: "member-a", version: member!.v },
     ]);
-    const start = await beginOAuth(db);
+    const start = await beginGoogleSignIn(db);
     const state = new URL(start.headers.location as string).searchParams.get(
       "state",
     )!;
@@ -61,7 +65,7 @@ describe("server-managed OAuth sessions", () => {
       nonce: pending!.nonce,
       iat: Date.now() / 1000,
     };
-    const finish = await finishOAuth(
+    const finish = await finishGoogleSignIn(
       { code: "test-code", state },
       { cookie: stateCookie },
       db,
@@ -261,7 +265,7 @@ describe("server-managed OAuth sessions", () => {
   it("uses state, PKCE and nonce, then restores and revokes a database session", async () => {
     env();
     const { db } = await fixture();
-    const start = await beginOAuth(db);
+    const start = await beginGoogleSignIn(db);
     const authorization = new URL(start.headers.location as string);
     expect(authorization.origin).toBe("https://accounts.google.com");
     expect(authorization.searchParams.get("code_challenge_method")).toBe(
@@ -286,7 +290,7 @@ describe("server-managed OAuth sessions", () => {
       exp: Date.now() / 1000 + 300,
       nonce: pending!.nonce,
     };
-    const finish = await finishOAuth(
+    const finish = await finishGoogleSignIn(
       { code: "authorization-code", state },
       { cookie: stateCookie },
       db,
@@ -311,7 +315,7 @@ describe("server-managed OAuth sessions", () => {
 
     await endSession(sessionHeaders, db);
     await expect(human(sessionHeaders, db)).rejects.toThrow("expired");
-    const replay = await finishOAuth(
+    const replay = await finishGoogleSignIn(
       { code: "authorization-code", state },
       { cookie: stateCookie },
       db,

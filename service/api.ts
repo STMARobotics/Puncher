@@ -16,9 +16,9 @@ import { store, runtime, publicConfig } from "./runtime";
 import { all, atomic, type Store } from "./store";
 import { Fault, assert, admin, mentor, owns, key, hash } from "./model";
 import {
-  beginOAuth,
+  beginGoogleSignIn,
   endSession,
-  finishOAuth,
+  finishGoogleSignIn,
   clearedSessionCookies,
 } from "./session";
 export type Request = {
@@ -83,9 +83,10 @@ export async function dispatch(req: Request, db: Store = store()) {
       );
       return response(200, { status: "ok", schemaVersion: 1 });
     }
-    if (method === "GET" && path === "/api/auth/login") return beginOAuth(db);
+    if (method === "GET" && path === "/api/auth/login")
+      return beginGoogleSignIn(db);
     if (method === "GET" && path === "/api/auth/callback")
-      return finishOAuth(req.query || {}, headers, db);
+      return finishGoogleSignIn(req.query || {}, headers, db);
     if (method !== "GET") {
       assert(
         headers.origin === c.origin,
