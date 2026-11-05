@@ -1,4 +1,4 @@
-import { type Store, Tx, atomic, all } from "./store";
+import { type Store, Tx, atomic, all, Conflict } from "./store";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { assignCard } from "./card-codes";
 import {
@@ -22,6 +22,15 @@ import {
   hoursToSeconds,
   eligible,
 } from "./model";
+const shopClockKey = (day: string) => key("SHOP_CLOCK#" + day);
+
+function staffedMillis(shop: Row | undefined, now: number) {
+  return (
+    (shop?.staffedMillis ?? 0) +
+    (shop?.openedAt === undefined ? 0 : Math.max(0, now - shop.openedAt))
+  );
+}
+
 export class Puncher {
   constructor(
     readonly store: Store,
@@ -104,10 +113,13 @@ export class Puncher {
       }),
     );
   }
-  async memberForCard(tx: Tx, card: string) {
-    const claim = await tx.get(key(`CARD#${barcode(card)}`));
+  async cardMember(tx: Tx, card: string) {
+    const claim = await tx.get(key("CARD#" + barcode(card)));
     assert(claim, "Card is not assigned. Ask a mentor.", 404);
-    const m = await tx.get(key(`MEMBER#${claim.memberId}`));
+    return tx.get(key("MEMBER#" + claim.memberId));
+  }
+  async memberForCard(tx: Tx, card: string) {
+    const m = await this.cardMember(tx, card);
     assert(
       m?.active && m.memberKind === "student",
       "This card is inactive or unavailable.",
@@ -115,7 +127,7 @@ export class Puncher {
     );
     return m;
   }
-  async expire(tx: Tx, current: Row, now: string) {
+  async expire(tx: Tx, current: Row, now: string): Promise<Row> {
     if (!current.sessionId || current.cutoffAt > now) return current;
     const session = await tx.get(key(current.pk, current.sessionSk));
     if (session?.status === "active") {
@@ -153,6 +165,85 @@ export class Puncher {
     await tx.put(next);
     return next;
   }
+  async readShopClock(tx: Tx) {
+    const day = localDay(this.clock());
+    const shop = await tx.get(shopClockKey(day));
+    const observed = this.clock();
+    if (localDay(observed) !== day) throw new Conflict();
+    const timestamp = Math.max(observed.getTime(), shop?.updatedAtMillis ?? 0);
+    return { day, shop, timestamp, now: new Date(timestamp).toISOString() };
+  }
+  // Attendance transactions condition on this clock so a scan cannot race
+  // a change in mentor coverage on another kiosk.
+  async changeMentorCount(
+    tx: Tx,
+    day: string,
+    shop: Row | undefined,
+    now: number,
+    delta: 1 | -1,
+  ) {
+    const mentorCount = (shop?.mentorCount ?? 0) + delta;
+    assert(
+      mentorCount >= 0,
+      "Shop attendance state needs administrator attention.",
+      409,
+    );
+    await tx.put(
+      row(shopClockKey(day).pk, "METADATA", {
+        mentorCount,
+        staffedMillis:
+          mentorCount === 0
+            ? staffedMillis(shop, now)
+            : (shop?.staffedMillis ?? 0),
+        openedAt: mentorCount === 0 ? undefined : (shop?.openedAt ?? now),
+        updatedAtMillis: now,
+        ttl: Math.floor(Date.parse(cutoff(day)) / 1000) + 7 * 86400,
+      }),
+    );
+  }
+  async startVisit(
+    tx: Tx,
+    current: Row,
+    day: string,
+    now: string,
+    isMentor: boolean,
+    openMillis: number,
+  ) {
+    const sessionId = uid();
+    const sk = ["SHOP", now, sessionId].join("#");
+    const c = cutoff(day);
+    await tx.put(
+      row(current.pk, sk, {
+        sessionId,
+        memberId: current.memberId,
+        shopDate: day,
+        reportingYear: reportingYear(day),
+        startedAt: now,
+        cutoffAt: c,
+        status: "active",
+        creditedSeconds: 0,
+        isMentor,
+        staffedMillisAtStart: openMillis,
+      }),
+    );
+    await tx.put(
+      row("ACTIVE", [c, current.memberId, sessionId].join("#"), {
+        memberId: current.memberId,
+        sessionId,
+        cutoffAt: c,
+      }),
+    );
+    return { ...current, sessionId, sessionSk: sk, cutoffAt: c, shopDate: day };
+  }
+  async currentVisit(tx: Tx, memberId: string, now: string) {
+    const k = key("MEMBER#" + memberId, "CURRENT");
+    const before =
+      (await tx.get(k)) ?? row(k.pk, k.sk, { memberId, sessionId: null });
+    return {
+      current: await this.expire(tx, before, now),
+      stale: !!before.sessionId && before.cutoffAt <= now,
+    };
+  }
   async scan(p: Principal, cardInput: unknown, operationId: string) {
     assert(p.kind === "device", "Kiosk device authorization required.", 403);
     const card = barcode(cardInput);
@@ -165,7 +256,6 @@ export class Puncher {
       await this.livePrincipal(tx, p);
       const opKey = key(`OP#${p.id}`, `SHOP#${operationId}`);
       const old = await tx.get(opKey);
-      const now = this.clock().toISOString();
       if (old) {
         assert(
           old.payload === payload,
@@ -173,26 +263,34 @@ export class Puncher {
           409,
         );
         assert(
-          old.responseUntil > now,
+          old.responseUntil > this.clock().toISOString(),
           "Operation replay window expired. Ask an adult to inspect the saved operation; do not rescan.",
           409,
         );
         return old.result;
       }
       await this.rate(tx, p);
-      const m = await this.memberForCard(tx, card);
-      const curKey = key(`MEMBER#${m.memberId}`, "CURRENT");
-      let cur =
-        (await tx.get(curKey)) ||
-        row(curKey.pk, curKey.sk, { memberId: m.memberId, sessionId: null });
-      const stale = !!cur.sessionId && cur.cutoffAt <= now;
-      cur = await this.expire(tx, cur, now);
+      const m = await this.cardMember(tx, card);
+      assert(m, "This card is inactive or unavailable.", 403);
+      const { day, shop, timestamp, now } = await this.readShopClock(tx);
+      const { current, stale } = await this.currentVisit(tx, m.memberId, now);
+      let cur = current;
+      assert(
+        m.active || cur.sessionId,
+        "This card is inactive or unavailable.",
+        403,
+      );
+      assert(
+        cur.sessionId || shop?.mentorCount > 0,
+        "Shop closed. Ask a mentor to reopen it with an activation QR.",
+        403,
+      );
+      const openMillis = staffedMillis(shop, timestamp);
       if (
         !stale &&
-        cur.shopDate === localDay(this.clock()) &&
+        cur.shopDate === day &&
         cur.lastScanAt &&
-        this.clock().getTime() - Date.parse(cur.lastScanAt) <
-          this.cooldown * 1000
+        timestamp - Date.parse(cur.lastScanAt) < this.cooldown * 1000
       ) {
         const result = {
           ...cur.lastResult,
@@ -213,7 +311,6 @@ export class Puncher {
         );
         return result;
       }
-      const day = localDay(this.clock());
       let result: any;
       if (cur.sessionId) {
         const session = await tx.get(key(cur.pk, cur.sessionSk));
@@ -222,10 +319,19 @@ export class Puncher {
           "Attendance state needs administrator attention.",
           409,
         );
-        const seconds = Math.max(
-          0,
-          Math.floor((Date.parse(now) - Date.parse(session.startedAt)) / 1000),
+        // Legacy visits have no baseline. Only tracked staffed time is
+        // credited and never more than the time since the visit began.
+        const seconds = Math.floor(
+          Math.max(
+            0,
+            Math.min(
+              Date.parse(now) - Date.parse(session.startedAt),
+              openMillis - (session.staffedMillisAtStart ?? 0),
+            ),
+          ) / 1000,
         );
+        if (session.isMentor)
+          await this.changeMentorCount(tx, day, shop, timestamp, -1);
         await tx.put({
           ...session,
           status: "completed",
@@ -252,29 +358,9 @@ export class Puncher {
         };
         cur = { ...cur, sessionId: null, sessionSk: null };
       } else {
-        const sessionId = uid();
-        const sk = `SHOP#${now}#${sessionId}`;
-        const c = cutoff(day);
-        await tx.put(
-          row(cur.pk, sk, {
-            sessionId,
-            memberId: m.memberId,
-            shopDate: day,
-            reportingYear: reportingYear(day),
-            startedAt: now,
-            cutoffAt: c,
-            status: "active",
-            creditedSeconds: 0,
-          }),
-        );
-        await tx.put(
-          row("ACTIVE", `${c}#${m.memberId}#${sessionId}`, {
-            memberId: m.memberId,
-            sessionId,
-            cutoffAt: c,
-          }),
-        );
-        cur = { ...cur, sessionId, sessionSk: sk, cutoffAt: c, shopDate: day };
+        const isMentor = m.memberKind === "mentor";
+        cur = await this.startVisit(tx, cur, day, now, isMentor, openMillis);
+        if (isMentor) await this.changeMentorCount(tx, day, shop, timestamp, 1);
         result = {
           state: "in",
           displayName: m.displayName,
@@ -507,6 +593,7 @@ export class Puncher {
         row(k.pk, k.sk, {
           googleSub: sub,
           memberId: input.memberId || undefined,
+          displayName: before?.displayName,
           email,
           enabled: input.enabled,
           roles: input.roles,
@@ -555,6 +642,7 @@ export class Puncher {
           googleSub: sub,
           memberId: before?.memberId,
           email: request.email,
+          displayName: request.displayName ?? before?.displayName,
           enabled: true,
           roles,
           gsi1pk: "IDENTITIES",
@@ -569,12 +657,117 @@ export class Puncher {
       return { approved: true };
     });
   }
+  async mentorAttendanceMember(tx: Tx, p: Principal, identity: Row) {
+    let memberId = identity.memberId as string | undefined;
+    if (!memberId) {
+      const directory = await tx.get(key("DIRECTORY#" + p.id));
+      const email = identity.email?.trim().toLowerCase();
+      const roster =
+        email && (await tx.get(key("ROSTER_EMAIL#" + hash(email))));
+      memberId =
+        directory?.memberId ??
+        (roster && !roster.retired ? roster.memberId : undefined);
+    }
+    memberId ??= uid();
+    const memberKey = key("MEMBER#" + memberId);
+    const member = await tx.get(memberKey);
+    const bindingKey = key("BINDING#" + memberId);
+    const binding = await tx.get(bindingKey);
+    const login = await tx.get(key("ROSTER_LOGIN#" + memberId));
+    assert(
+      (!binding || binding.googleSub === p.id) &&
+        (!login || login.sub === p.id) &&
+        (!member?.directoryUserId || member.directoryUserId === p.id),
+      "This attendance member is linked to another account. Ask an administrator to review it.",
+      409,
+    );
+    assert(
+      !member || member.active,
+      "The mentor attendance account is inactive.",
+      403,
+    );
+    const card = await assignCard(tx, memberId, member?.barcode);
+    const profileName = identity.displayName as string | undefined;
+    const accountName = identity.email?.split("@")[0].replace(/[._-]+/g, " ");
+    const displayName =
+      member?.displayName ??
+      (profileName && !profileName.includes("@")
+        ? profileName
+        : accountName || "Mentor");
+    if (!member || member.memberKind !== "mentor" || member.barcode !== card)
+      await tx.put({
+        ...member,
+        ...row(memberKey.pk, memberKey.sk, {
+          memberId,
+          displayName,
+          memberKind: "mentor",
+          active: true,
+          barcode: card,
+          gsi1pk: "MEMBERS",
+          gsi1sk: memberId,
+        }),
+      });
+    if (!binding)
+      await tx.put(row(bindingKey.pk, bindingKey.sk, { googleSub: p.id }));
+    if (identity.memberId !== memberId) {
+      await tx.put({ ...identity, memberId });
+      await this.audit(tx, p, "member.mentor_linked", memberId);
+    }
+    return { memberId, barcode: card, displayName };
+  }
+  async clockInLaunchingMentor(tx: Tx, p: Principal, identity: Row) {
+    const { memberId, displayName } = await this.mentorAttendanceMember(
+      tx,
+      p,
+      identity,
+    );
+    const { day, shop, timestamp, now } = await this.readShopClock(tx);
+    const { current } = await this.currentVisit(tx, memberId, now);
+    const active = current.sessionId
+      ? await tx.get(key(current.pk, current.sessionSk))
+      : undefined;
+    assert(
+      !current.sessionId || active?.status === "active",
+      "Attendance state needs administrator attention.",
+      409,
+    );
+    if (active?.isMentor) return now;
+    await this.changeMentorCount(tx, day, shop, timestamp, 1);
+    if (active) {
+      // An already active visit keeps the original start and earned time.
+      await tx.put({ ...active, isMentor: true });
+    } else {
+      const visit = await this.startVisit(
+        tx,
+        current,
+        day,
+        now,
+        true,
+        staffedMillis(shop, timestamp),
+      );
+      await tx.put({
+        ...visit,
+        lastScanAt: null,
+        lastResult: {
+          state: "in",
+          displayName,
+          startedAt: now,
+          warning: current.warning,
+        },
+      });
+      await this.audit(tx, p, "shop.in", memberId, {
+        source: "kiosk_activation",
+      });
+    }
+    return now;
+  }
   async issueKioskActivation(p: Principal) {
     mentor(p);
     const code = "PUNCHER-" + randomBytes(24).toString("hex").toUpperCase();
     const expires = new Date(this.clock().getTime() + 2 * 60_000);
-    await atomic(this.store, async (tx) => {
-      await this.livePrincipal(tx, p);
+    return atomic(this.store, async (tx) => {
+      const identity = await this.livePrincipal(tx, p);
+      const { barcode } = await this.mentorAttendanceMember(tx, p, identity);
       await tx.put(
         row("KIOSK_ACTIVATION#" + hash(code), "METADATA", {
           mentorId: p.id,
@@ -582,8 +775,8 @@ export class Puncher {
           ttl: Math.floor(expires.getTime() / 1000),
         }),
       );
+      return { code, expiresAt: expires.toISOString(), barcode };
     });
-    return { code, expiresAt: expires.toISOString() };
   }
   async activateKiosk(
     code: unknown,
@@ -627,7 +820,7 @@ export class Puncher {
       this.clock().getTime() + 12 * 3600000,
     ).toISOString();
     const session = await atomic(this.store, async (tx) => {
-      await this.livePrincipal(tx, p);
+      const identity = await this.livePrincipal(tx, p);
       if (activationKey) {
         const activation = await tx.get(activationKey);
         assert(
@@ -655,6 +848,7 @@ export class Puncher {
         expected.length === actual.length &&
         timingSafeEqual(expected, actual);
       const id = resumed ? oldId : generatedId;
+      const now = await this.clockInLaunchingMentor(tx, p, identity);
       await tx.put(
         row(`DEVICE#${id}`, "METADATA", {
           deviceId: id,
@@ -663,7 +857,7 @@ export class Puncher {
           enabled: true,
           sessionType: "mentor-launch",
           launchedBy: p.id,
-          launchedAt: this.clock().toISOString(),
+          launchedAt: now,
           ttl: Math.floor(this.clock().getTime() / 1000) + 31 * 86400,
           expiresAt,
           gsi1pk: "DEVICES",
@@ -902,6 +1096,7 @@ export class Puncher {
       memberId: string;
       displayName: string;
       cutoffAt: string;
+      isMentor: boolean;
     }[] = [];
     for (let i = 0; i < active.length; i += 4) {
       const group = await Promise.all(
@@ -921,7 +1116,8 @@ export class Puncher {
             this.store.get(key(`MEMBER#${entry.memberId}`, current.sessionSk)),
           ]);
           if (
-            !member?.active ||
+            !member ||
+            (!member.active && !session?.isMentor) ||
             session?.status !== "active" ||
             session.sessionId !== current.sessionId ||
             session.cutoffAt <= this.clock().toISOString()
@@ -931,6 +1127,7 @@ export class Puncher {
             memberId: member.memberId,
             displayName: member.displayName as string,
             cutoffAt: session.cutoffAt as string,
+            isMentor: session.isMentor === true,
           };
         }),
       );
@@ -945,15 +1142,20 @@ export class Puncher {
     const members = [...unique.values()].sort((a, b) =>
       a.displayName.localeCompare(b.displayName, "en"),
     );
+    const day = localDay(new Date(asOf));
+    const shop = await this.store.get(shopClockKey(day));
     const validUntil = new Date(
-      Math.min(
-        Date.parse(asOf) + 15000,
-        ...members.map((member) => Date.parse(member.cutoffAt)),
-      ),
+      Math.min(Date.parse(asOf) + 15000, Date.parse(cutoff(day))),
     ).toISOString();
     // Explicit display DTO: never disclose IDs, cards, emails, roles, or session history.
     return {
-      occupants: members.map(({ displayName }) => ({ displayName })),
+      shopOpen: (shop?.mentorCount ?? 0) > 0,
+      mentors: members
+        .filter((member) => member.isMentor)
+        .map(({ displayName }) => ({ displayName })),
+      occupants: members
+        .filter((member) => !member.isMentor)
+        .map(({ displayName }) => ({ displayName })),
       asOf,
       validUntil,
     };

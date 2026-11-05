@@ -14,9 +14,13 @@ it("shows current names only, sorted, and removes people after checkout", async 
   ]);
   expect(Object.keys(result).sort()).toEqual([
     "asOf",
+    "mentors",
     "occupants",
+    "shopOpen",
     "validUntil",
   ]);
+  expect(result.mentors).toEqual([{ displayName: "Taylor Mentor" }]);
+  expect(result.shopOpen).toBe(true);
   expect(Date.parse(result.validUntil) - Date.parse(result.asOf)).toBe(15000);
   expect(JSON.stringify(result)).not.toMatch(
     /member-a|member-b|000123|000456|sessionId|startedAt|email|barcode/,

@@ -1,7 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 
-export function KioskActivation({ initialError }: { initialError: string }) {
+export function KioskActivation({
+  initialError,
+  onCancel,
+}: {
+  initialError: string;
+  onCancel?: () => void;
+}) {
   const input = useRef<HTMLInputElement>(null);
   const busy = useRef(false);
   const [error, setError] = useState("");
@@ -59,6 +65,11 @@ export function KioskActivation({ initialError }: { initialError: string }) {
           maxLength={80}
         />
       </form>
+      {onCancel && (
+        <button className="secondary" disabled={activating} onClick={onCancel}>
+          Back to card scanner
+        </button>
+      )}
       {activating && <p role="status">Activating kiosk…</p>}
       {(error || initialError) && (
         <p className="error" role="alert">

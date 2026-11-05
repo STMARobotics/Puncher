@@ -117,7 +117,9 @@ function App() {
     setActivation(undefined);
     setError("");
     try {
-      setActivation(await api("/mentor/kiosk/activation", {}));
+      const pass = await api("/mentor/kiosk/activation", {});
+      setActivation(pass);
+      setPerson((current) => current && { ...current, barcode: pass.barcode });
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -244,6 +246,18 @@ function App() {
                 <ActivationPass key={activation.code} {...activation} />
               </React.Suspense>
             )}
+            {person.barcode && (
+              <details className="mentor-pass">
+                <summary>Your attendance barcode</summary>
+                <React.Suspense fallback={<p>Loading barcode…</p>}>
+                  <PassCode
+                    value={person.barcode}
+                    label="Your attendance barcode"
+                  />
+                </React.Suspense>
+                <p>Scan this barcode at the kiosk to check out.</p>
+              </details>
+            )}
             {foreignPending && (
               <div className="notice error">
                 <p>
@@ -286,6 +300,8 @@ function Kiosk() {
     [error, setError] = useState(""),
     [focused, setFocused] = useState(document.hasFocus()),
     [attendanceVersion, setAttendanceVersion] = useState(0),
+    [shopOpen, setShopOpen] = useState<boolean>(),
+    [scanningActivation, setScanningActivation] = useState(false),
     [enteredCharacters, setEnteredCharacters] = useState(0),
     [scanPulse, setScanPulse] = useState(0);
   const input = useRef<HTMLInputElement>(null),
@@ -378,6 +394,7 @@ function Kiosk() {
         sessionStorage.removeItem("puncher-pending");
         setState("error");
         setError(e.message);
+        if (e.status === 403) setAttendanceVersion((version) => version + 1);
         const g = generation.current;
         timers.current.push(
           setTimeout(() => {
@@ -424,7 +441,8 @@ function Kiosk() {
   const submitRef = useRef(submit);
   submitRef.current = submit;
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || scanningActivation) return;
+    input.current?.focus();
     const scanner = new ScanBuffer(
       (card) => submitRef.current(card),
       () => {
@@ -482,7 +500,7 @@ function Kiosk() {
       window.removeEventListener("focus", focus);
       window.removeEventListener("blur", blur);
     };
-  }, [ready]);
+  }, [ready, scanningActivation]);
   async function endKiosk() {
     if (pending.current || busy.current) {
       setError("Finish the pending scan before ending the kiosk.");
@@ -500,11 +518,9 @@ function Kiosk() {
     <div className="kiosk">
       {ready && (
         <div className="kiosk-topline">
-          {ready && (
-            <button className="secondary" onClick={endKiosk}>
-              End kiosk
-            </button>
-          )}
+          <button className="secondary" onClick={endKiosk}>
+            End kiosk
+          </button>
           <div className="clock">
             {new Intl.DateTimeFormat("en-US", {
               timeZone: "America/Chicago",
@@ -542,21 +558,30 @@ function Kiosk() {
         </section>
       ) : (
         <>
+          {scanningActivation && (
+            <KioskActivation
+              initialError=""
+              onCancel={() => setScanningActivation(false)}
+            />
+          )}
           <section
-            className={`scan-panel ${state}`}
+            hidden={scanningActivation}
+            className={`scan-panel ${state}${shopOpen === false ? " closed" : ""}`}
             aria-live="polite"
             aria-atomic="true"
           >
             <ScanEffects pulse={scanPulse} />
             <div className="scan-status">
               <span className={`dot ${focused ? "" : "amber"}`} />
-              {focused
-                ? state === "processing"
-                  ? "SAVING"
-                  : state === "uncertain"
-                    ? "CONNECTION ISSUE"
-                    : "READY"
-                : "WINDOW NEEDS FOCUS"}
+              {shopOpen === false
+                ? "SHOP CLOSED"
+                : focused
+                  ? state === "processing"
+                    ? "SAVING"
+                    : state === "uncertain"
+                      ? "CONNECTION ISSUE"
+                      : "READY"
+                  : "WINDOW NEEDS FOCUS"}
             </div>
             <input
               ref={input}
@@ -639,9 +664,26 @@ function Kiosk() {
               </>
             ) : (
               <>
-                <h2>SCAN YOUR ID</h2>
+                <h2>
+                  {shopOpen === false ? "SCAN TO CLOCK OUT" : "SCAN YOUR ID"}
+                </h2>
               </>
             )}
+            {shopOpen === false && (
+              <p>Clock-outs only. Attendance time is paused.</p>
+            )}
+            <button
+              className="secondary"
+              disabled={state === "processing" || state === "uncertain"}
+              onClick={() => {
+                if (!pending.current && !busy.current) {
+                  setEnteredCharacters(0);
+                  setScanningActivation(true);
+                }
+              }}
+            >
+              Scan mentor activation code
+            </button>
             {!focused && (
               <p className="warning">Select this window to resume scanning.</p>
             )}
@@ -664,7 +706,7 @@ function Kiosk() {
               )}
           </section>
           <ShopTotals />
-          <InShop revision={attendanceVersion} />
+          <InShop revision={attendanceVersion} onShopState={setShopOpen} />
           <Retry pending={pending} send={send} state={state} />
         </>
       )}
@@ -681,16 +723,22 @@ function Retry({ pending, send, state }: any) {
   }, [state]);
   return null;
 }
-function InShop({ revision }: { revision: number }) {
-  const [occupants, setOccupants] = useState<
-      { displayName: string }[] | undefined
-    >(),
+type Occupant = { displayName: string };
+function InShop({
+  revision,
+  onShopState,
+}: {
+  revision: number;
+  onShopState: (open: boolean | undefined) => void;
+}) {
+  const [presence, setPresence] = useState<{
+      mentors: Occupant[];
+      occupants: Occupant[];
+    }>(),
     [status, setStatus] = useState<"loading" | "ready" | "unavailable">(
       "loading",
     );
   useEffect(() => {
-    setOccupants(undefined);
-    setStatus("loading");
     let active = true,
       request = 0,
       expiry: ReturnType<typeof setTimeout> | undefined;
@@ -706,18 +754,21 @@ function InShop({ revision }: { revision: number }) {
           (performance.now() - started);
         if (remaining <= 0) throw new Error("Attendance expired.");
         clearTimeout(expiry);
-        setOccupants(data.occupants);
+        setPresence({ mentors: data.mentors ?? [], occupants: data.occupants });
+        onShopState(data.shopOpen);
         setStatus("ready");
         expiry = setTimeout(() => {
           if (active) {
-            setOccupants(undefined);
+            setPresence(undefined);
+            onShopState(undefined);
             setStatus("unavailable");
           }
         }, remaining);
       } catch {
         if (active && sequence === request) {
           clearTimeout(expiry);
-          setOccupants(undefined);
+          setPresence(undefined);
+          onShopState(undefined);
           setStatus("unavailable");
         }
       }
@@ -731,7 +782,7 @@ function InShop({ revision }: { revision: number }) {
       clearTimeout(expiry);
       window.removeEventListener("focus", load);
     };
-  }, [revision]);
+  }, [revision, onShopState]);
   const initials = (name: string) =>
     name
       .trim()
@@ -741,6 +792,12 @@ function InShop({ revision }: { revision: number }) {
       .slice(0, 2)
       .join("")
       .toUpperCase();
+  const count =
+    (presence?.mentors.length ?? 0) + (presence?.occupants.length ?? 0);
+  const groups = [
+    { label: "Mentors", people: presence?.mentors ?? [] },
+    { label: "Members", people: presence?.occupants ?? [] },
+  ];
   return (
     <section className="in-shop" aria-labelledby="in-shop-title">
       <div className="in-shop-heading">
@@ -748,10 +805,10 @@ function InShop({ revision }: { revision: number }) {
         {status === "ready" && (
           <span
             className="presence-count"
-            aria-label={`${occupants!.length} people in the shop`}
+            aria-label={`${count} people in the shop`}
           >
             <span className="dot" />
-            {occupants!.length} here
+            {count} here
           </span>
         )}
       </div>
@@ -761,20 +818,34 @@ function InShop({ revision }: { revision: number }) {
         <p className="presence-empty" role="status">
           Current attendance is unavailable.
         </p>
-      ) : occupants!.length === 0 ? (
+      ) : count === 0 ? (
         <p className="presence-empty">No one is clocked in.</p>
       ) : (
-        <ul className="presence-grid">
-          {occupants!.map(({ displayName }, index) => (
-            <li className="presence-card" key={`${displayName}-${index}`}>
-              <span className="presence-avatar" aria-hidden="true">
-                {initials(displayName)}
-              </span>
-              <span className="presence-name">{displayName}</span>
-              <span className="presence-indicator" aria-hidden="true" />
-            </li>
+        <div className="presence-columns">
+          {groups.map(({ label, people }) => (
+            <section key={label} aria-label={label}>
+              <h3>{label}</h3>
+              {people.length === 0 ? (
+                <p className="presence-empty">None clocked in.</p>
+              ) : (
+                <ul className="presence-grid">
+                  {people.map(({ displayName }, index) => (
+                    <li
+                      className="presence-card"
+                      key={displayName + "-" + index}
+                    >
+                      <span className="presence-avatar" aria-hidden="true">
+                        {initials(displayName)}
+                      </span>
+                      <span className="presence-name">{displayName}</span>
+                      <span className="presence-indicator" aria-hidden="true" />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
           ))}
-        </ul>
+        </div>
       )}
     </section>
   );

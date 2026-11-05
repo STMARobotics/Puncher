@@ -91,6 +91,25 @@ test("mentor session revocation commits with kiosk launch on real DynamoDB", asy
   assert.ok(await db.get(k));
 });
 
+test("real DynamoDB preserves a member visit through a cross-kiosk shop closure", async () => {
+  const { app, db, advance, openShop } = await setup();
+  const opening = await openShop();
+  const secondKiosk = {
+    kind: "device" as const,
+    id: opening.sessionId,
+    roles: [],
+  };
+  await app.scan(device, "000123", uid());
+  advance(60);
+  const before = await db.get(key("MEMBER#member-a", "CURRENT"));
+  await app.scan(secondKiosk, opening.barcode, uid());
+  assert.equal((await app.kioskOccupants(device)).shopOpen, false);
+  assert.deepEqual(await db.get(key("MEMBER#member-a", "CURRENT")), before);
+  advance(120);
+  await assert.rejects(app.scan(device, "000456", uid()), /Shop closed/);
+  assert.equal((await app.scan(device, "000123", uid())).creditedSeconds, 60);
+});
+
 test("CSV import and card replacement preserve canonical attendance on real DynamoDB", async () => {
   const { db, app, advance } = await setup({ orgId: "example-team" });
   await app.scan(device, "000123", uid());
@@ -274,13 +293,14 @@ test("real conditional card claim and event uniqueness across competing writers"
   );
 });
 test("real cleanup racing a new scan preserves completed credit and new session", async () => {
-  const { app, db, set, advance } = await setup();
+  const { app, db, set, advance, openShop } = await setup();
   await app.scan(device, "000123", uid());
   advance(300);
   await app.scan(device, "000123", uid());
   advance(6);
   await app.scan(device, "000123", uid());
   set("2026-06-03T05:00:01.000Z");
+  await openShop();
   const [, scan] = await Promise.all([
     app.cleanup(),
     app.scan(device, "000123", uid()),

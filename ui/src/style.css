@@ -479,6 +479,9 @@ td small {
   align-items: center;
   isolation: isolate;
 }
+.scan-panel[hidden] {
+  display: none;
+}
 .scan-panel > :not(.scan-effects) {
   z-index: 1;
 }
@@ -655,6 +658,29 @@ td small {
   gap: 8px;
   font-size: 12px;
   color: #aab3bd;
+}
+.mentor-pass {
+  margin-top: 24px;
+}
+.mentor-pass summary {
+  cursor: pointer;
+}
+.scan-panel.closed .scan-status {
+  color: #ffbb75;
+}
+.presence-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.presence-columns h3 {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+@media (max-width: 600px) {
+  .presence-columns {
+    grid-template-columns: 1fr;
+  }
 }
 .presence-grid {
   list-style: none;

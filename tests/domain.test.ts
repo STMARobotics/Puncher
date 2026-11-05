@@ -68,7 +68,7 @@ describe("shop attendance", () => {
     await app.scan(device, "000123", uid());
     expect((await app.scan(device, "000123", uid())).state).toBe("cooldown");
     expect((await app.scan(device, "000456", uid())).state).toBe("in");
-    expect((await all(db, "ACTIVE")).length).toBe(2);
+    expect((await all(db, "ACTIVE")).length).toBe(3);
   });
   it("handles concurrent toggles and concurrent duplicate operation retries", async () => {
     const { app, db } = await fixture();
@@ -104,13 +104,14 @@ describe("shop attendance", () => {
     expect(rs.filter((r) => r.status === "fulfilled")).toHaveLength(1);
   });
   it("expires only unfinished visits and retains warnings until delivery is confirmed", async () => {
-    const { app, db, advance, set } = await fixture();
+    const { app, db, advance, set, openShop } = await fixture();
     await app.scan(device, "000123", uid());
     advance(600);
     await app.scan(device, "000123", uid());
     advance(6);
     await app.scan(device, "000123", uid());
     set("2026-06-01T05:00:00.000Z");
+    await openShop();
     const id = uid(),
       result = await app.scan(device, "000123", id);
     expect(result.state).toBe("in");
@@ -132,35 +133,39 @@ describe("shop attendance", () => {
     ).toBeNull();
   });
   it("starts a new visit after cutoff even within the cooldown", async () => {
-    const { app, set } = await fixture();
+    const { app, set, openShop } = await fixture();
     set("2026-06-01T04:59:59.000Z");
     await app.scan(device, "000123", uid());
     set("2026-06-01T05:00:00.000Z");
+    await openShop();
     expect((await app.scan(device, "000123", uid())).state).toBe("in");
   });
   it("starts after scheduler expiration even if the prior scan was one second before midnight", async () => {
-    const { app, set } = await fixture();
+    const { app, set, openShop } = await fixture();
     set("2026-06-01T04:59:59.000Z");
     await app.scan(device, "000123", uid());
     set("2026-06-01T05:00:00.000Z");
+    await openShop();
     await app.cleanup();
     const result = await app.scan(device, "000123", uid());
     expect(result.state).toBe("in");
     expect(result.warning.shopDate).toBe("2026-05-31");
   });
   it("catches up multiple dates, cleanup reruns and concurrent cleanup/scan do not clear a new session", async () => {
-    const { app, db, set } = await fixture();
+    const { app, db, set, openShop } = await fixture();
     await app.scan(device, "000123", uid());
     await app.scan(device, "000456", uid());
     set("2026-06-04T05:00:01.000Z");
+    const opening = await openShop();
     await Promise.all([app.cleanup(), app.scan(device, "000123", uid())]);
     await app.cleanup();
     const current = await db.get(key("MEMBER#member-a", "CURRENT"));
     expect(current?.sessionId).toBeTruthy();
-    expect((await all(db, "ACTIVE")).length).toBe(1);
-    expect((await app.roster(admin)).map((r) => r.memberId)).toEqual([
-      "member-a",
-    ]);
+    expect((await all(db, "ACTIVE")).length).toBe(2);
+    const mentorCard = await db.get(key("CARD#" + opening.barcode));
+    expect((await app.roster(admin)).map((r) => r.memberId).sort()).toEqual(
+      ["member-a", mentorCard!.memberId].sort(),
+    );
   });
   it("logically excludes expired active visits before scheduler cleanup", async () => {
     const { app, set } = await fixture();

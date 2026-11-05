@@ -183,7 +183,7 @@ export async function dispatch(req: Request, db: Store = store()) {
     const p = await human(headers, db);
     if (path === "/api/me" && method === "GET") {
       const student = p.roles.length === 1 && p.roles[0] === "student";
-      const member = student
+      const member = p.memberId
         ? await db.get(key("MEMBER#" + p.memberId))
         : undefined;
       if (student)
@@ -198,7 +198,7 @@ export async function dispatch(req: Request, db: Store = store()) {
         id: p.id,
         roles: p.roles,
         memberId: p.memberId,
-        ...(student ? { barcode: member?.barcode } : {}),
+        ...(member?.active ? { barcode: member.barcode } : {}),
       });
     }
     mentor(p);

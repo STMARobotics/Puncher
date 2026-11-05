@@ -264,6 +264,7 @@ export class BackendStack extends cdk.Stack {
         "CARD#*",
         "OP#*",
         "RATE#device#*",
+        "SHOP_CLOCK#*",
         "ACTIVE",
         "AUDIT",
         "APP#PUNCHER",
