@@ -834,15 +834,6 @@ function InShop({
       window.removeEventListener("focus", load);
     };
   }, [revision, onShopState]);
-  const initials = (name: string) =>
-    name
-      .trim()
-      .split(/\s+/)
-      .map((part) => Array.from(part)[0])
-      .filter(Boolean)
-      .slice(0, 2)
-      .join("")
-      .toUpperCase();
   const count =
     (presence?.mentors.length ?? 0) + (presence?.occupants.length ?? 0);
   const groups = [
@@ -873,29 +864,32 @@ function InShop({
         <p className="presence-empty">No one is clocked in.</p>
       ) : (
         <div className="presence-columns">
-          {groups.map(({ label, people }) => (
-            <section key={label} aria-label={label}>
-              <h3>{label}</h3>
-              {people.length === 0 ? (
-                <p className="presence-empty">None clocked in.</p>
-              ) : (
-                <ul className="presence-grid">
-                  {people.map(({ displayName }, index) => (
-                    <li
-                      className="presence-card"
-                      key={displayName + "-" + index}
-                    >
-                      <span className="presence-avatar" aria-hidden="true">
-                        {initials(displayName)}
-                      </span>
-                      <span className="presence-name">{displayName}</span>
-                      <span className="presence-indicator" aria-hidden="true" />
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-          ))}
+          {groups.map(({ label, people }) => {
+            const named = people.filter(({ displayName }) => displayName);
+            return (
+              <section key={label} aria-label={label}>
+                <h3>{label}</h3>
+                {named.length === 0 ? (
+                  <p className="presence-empty">
+                    {people.length
+                      ? "No names to display."
+                      : "None clocked in."}
+                  </p>
+                ) : (
+                  <ul className="presence-grid">
+                    {named.map(({ displayName }, index) => (
+                      <li
+                        className="presence-card"
+                        key={displayName + "-" + index}
+                      >
+                        {displayName}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            );
+          })}
         </div>
       )}
     </section>

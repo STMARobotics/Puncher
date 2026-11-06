@@ -4,7 +4,7 @@ import { atomic } from "../service/store";
 import { key, row, uid } from "../service/model";
 import { dispatch } from "../service/api";
 it("shows current names only, sorted, and removes people after checkout", async () => {
-  const { app, advance } = await fixture();
+  const { app, db, advance } = await fixture();
   await app.scan(device, "000456", uid());
   await app.scan(device, "000123", uid());
   const result = await app.kioskOccupants(device);
@@ -25,6 +25,15 @@ it("shows current names only, sorted, and removes people after checkout", async 
   expect(JSON.stringify(result)).not.toMatch(
     /member-a|member-b|000123|000456|sessionId|startedAt|email|barcode/,
   );
+  await atomic(db, async (tx) => {
+    const user = (await tx.get(key("USER#member-a")))!;
+    const email = "alex.smith-jones@stmarobotics.org";
+    await tx.put({ ...user, email, displayName: email });
+  });
+  expect((await app.kioskOccupants(device)).occupants).toEqual([
+    { displayName: "Alex Smith-Jones" },
+    { displayName: "Jordan Sample" },
+  ]);
   advance(6);
   await app.scan(device, "000123", uid());
   expect((await app.kioskOccupants(device)).occupants).toEqual([
