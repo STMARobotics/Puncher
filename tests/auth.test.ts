@@ -56,7 +56,7 @@ describe("verified identity and route boundaries", () => {
       }),
     ).rejects.toThrow("invalid");
   });
-  it("rejects unmapped and disabled subjects", async () => {
+  it("rejects requests without a registered or active account", async () => {
     env();
     const { db } = await fixture();
     const payload: any = {
@@ -70,10 +70,10 @@ describe("verified identity and route boundaries", () => {
     };
     await expect(
       human({ authorization: "Bearer t" }, db, async () => payload),
-    ).rejects.toThrow("setup");
+    ).rejects.toThrow("create your Puncher account");
     await atomic(db, async (tx) => {
-      const r = await tx.get(key("IDENTITY#local-admin"));
-      await tx.put({ ...r!, enabled: false });
+      const r = await tx.get(key("USER#local-admin"));
+      await tx.put({ ...r!, active: false });
     });
     await expect(
       human({ authorization: "Bearer t" }, db, async () => ({

@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { admin, device, fixture, mentor } from "./helpers";
-import { all, atomic, MemoryStore } from "../service/store";
-import { hash, key, row, uid } from "../service/model";
+import { all, MemoryStore } from "../service/store";
+import { key, uid } from "../service/model";
 
 it("starts the mentor only when the QR is redeemed, without duplicating an active visit", async () => {
   const { app, db, advance } = await fixture(new MemoryStore(), false);
@@ -9,7 +9,7 @@ it("starts the mentor only when the QR is redeemed, without duplicating an activ
   const member = await db.get(key("CARD#" + pass.barcode));
   expect((await app.kioskOccupants(device)).shopOpen).toBe(false);
   expect(
-    await db.get(key("MEMBER#" + member!.memberId, "CURRENT")),
+    await db.get(key("ATTENDANCE#" + member!.memberId, "CURRENT")),
   ).toBeUndefined();
   const second = await app.issueKioskActivation(mentor);
   expect(second.barcode).toBe(pass.barcode);
@@ -23,7 +23,7 @@ it("starts the mentor only when the QR is redeemed, without duplicating an activ
     occupants: [],
   });
   expect(
-    await all(db, "MEMBER#" + member!.memberId, { prefix: "SHOP#" }),
+    await all(db, "ATTENDANCE#" + member!.memberId, { prefix: "SHOP#" }),
   ).toHaveLength(1);
   advance(30);
   expect(await app.scan(device, pass.barcode, uid())).toMatchObject({
@@ -44,7 +44,7 @@ it("preserves active visits, permits closed-shop checkouts, and resumes credit w
   const other = await openShop(admin);
   await scan("000123");
   await scan("000456");
-  const before = await db.get(key("MEMBER#member-a", "CURRENT"));
+  const before = await db.get(key("ATTENDANCE#member-a", "CURRENT"));
   advance(60);
   await scan(lead.barcode);
   expect((await app.kioskOccupants(device)).shopOpen).toBe(true);
@@ -65,7 +65,7 @@ it("preserves active visits, permits closed-shop checkouts, and resumes credit w
   });
   await expect(scan("000456")).rejects.toThrow("Shop closed");
   await expect(scan(lead.barcode)).rejects.toThrow("Shop closed");
-  expect(await db.get(key("MEMBER#member-a", "CURRENT"))).toEqual(before);
+  expect(await db.get(key("ATTENDANCE#member-a", "CURRENT"))).toEqual(before);
   await openShop();
   advance(40);
   expect(await scan("000123")).toMatchObject({
@@ -74,31 +74,27 @@ it("preserves active visits, permits closed-shop checkouts, and resumes credit w
   });
 });
 
-it("reuses an already rostered mentor's card and promotes their active visit without losing credit", async () => {
-  const { app, db, advance, openShop } = await fixture();
-  await atomic(db, async (tx) => {
-    const identity = await tx.get(key("IDENTITY#" + admin.id));
-    await tx.put({ ...identity!, email: "casey@stmarobotics.org" });
-    await tx.put(
-      row("ROSTER_EMAIL#" + hash("casey@stmarobotics.org"), "METADATA", {
-        memberId: "member-a",
-      }),
-    );
-    await tx.put(row("ROSTER_LOGIN#member-a", "METADATA", { sub: admin.id }));
-  });
+it("blocks role changes during an active visit and allows them after checkout", async () => {
+  const { app, db, advance } = await fixture();
   await app.scan(device, "000123", uid());
-  advance(25);
-  expect((await openShop(admin)).barcode).toBe("000123");
-  expect((await app.kioskOccupants(device)).mentors).toContainEqual({
-    displayName: "Alex Example",
-  });
+  const member = (await db.get(key("USER#member-a")))!;
+  const edit = {
+    displayName: member.displayName,
+    role: "MENTOR",
+    active: true,
+    version: member.v,
+  };
+  await expect(app.updateMember(admin, "member-a", edit)).rejects.toThrow(
+    "clock out",
+  );
   advance(30);
-  expect(await app.scan(device, "000123", uid())).toMatchObject({
-    state: "out",
-    creditedSeconds: 55,
+  await app.scan(device, "000123", uid());
+  await app.updateMember(admin, "member-a", edit);
+  expect(await db.get(key("USER#member-a"))).toMatchObject({
+    role: "MENTOR",
+    barcode: "000123",
   });
 });
-
 it("ends the kiosk at Chicago midnight and forfeits unfinished mentor and student visits", async () => {
   const { app, db, set, openShop } = await fixture(new MemoryStore(), false);
   set("2026-06-01T04:59:00.000Z");
@@ -106,7 +102,6 @@ it("ends the kiosk at Chicago midnight and forfeits unfinished mentor and studen
   const devicePrincipal = {
     kind: "device" as const,
     id: kiosk.sessionId,
-    roles: [],
   };
   expect(kiosk.expiresAt).toBe("2026-06-01T05:00:00.000Z");
   await app.scan(devicePrincipal, "000123", uid());
@@ -117,7 +112,9 @@ it("ends the kiosk at Chicago midnight and forfeits unfinished mentor and studen
   await app.cleanup();
   const mentorCard = await db.get(key("CARD#" + kiosk.barcode));
   for (const memberId of ["member-a", mentorCard!.memberId]) {
-    const [visit] = await all(db, "MEMBER#" + memberId, { prefix: "SHOP#" });
+    const [visit] = await all(db, "ATTENDANCE#" + memberId, {
+      prefix: "SHOP#",
+    });
     expect(visit).toMatchObject({
       status: "forfeited_missing_checkout",
       creditedSeconds: 0,

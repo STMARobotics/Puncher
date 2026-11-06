@@ -29,7 +29,7 @@ export class BackendStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: cdk.StackProps, c: Config) {
     super(scope, id, props);
     const prefix = "puncher";
-    this.table = new ddb.Table(this, "Records", {
+    this.table = new ddb.Table(this, "UserRecords", {
       tableName: c.tableName,
       stream: activityStream(this),
       partitionKey: { name: "pk", type: ddb.AttributeType.STRING },
@@ -137,8 +137,7 @@ export class BackendStack extends cdk.Stack {
           "ForAllValues:StringLike": {
             "dynamodb:LeadingKeys": [
               "DEVICE#*",
-              "IDENTITY#*",
-              "MEMBER#*",
+              "USER#*",
               "APP#PUNCHER",
               "SUMMARY#SHOP",
             ],
@@ -152,7 +151,7 @@ export class BackendStack extends cdk.Stack {
         resources: [this.table.tableArn],
         conditions: {
           "ForAllValues:StringLike": {
-            "dynamodb:LeadingKeys": ["IDENTITY#*", "MEMBER#*"],
+            "dynamodb:LeadingKeys": ["USER#*"],
           },
         },
       }),
@@ -163,7 +162,7 @@ export class BackendStack extends cdk.Stack {
         resources: [this.table.tableArn, `${this.table.tableArn}/index/GSI1`],
         conditions: {
           "ForAllValues:StringLike": {
-            "dynamodb:LeadingKeys": ["MEMBERS", "MEMBER#*"],
+            "dynamodb:LeadingKeys": ["USERS", "ATTENDANCE#*"],
           },
         },
       }),
@@ -212,21 +211,9 @@ export class BackendStack extends cdk.Stack {
             : {}),
         }),
       );
-    permission(humans, ["GetItem"], ["IDENTITY#*", "MEMBER#*"]);
-    permission(devices, ["GetItem"], ["DEVICE#*", "IDENTITY#*", "MEMBER#*"]);
-    permission(kiosk, ["GetItem", "ConditionCheckItem"], ["IDENTITY#*"]);
-    permission(humans, ["GetItem"], ["SESSION#*"]);
-    permission(
-      humans,
-      ["GetItem"],
-      ["ROSTER_EMAIL#*", "ROSTER_LOGIN#*", "BINDING#*"],
-    );
-    permission(humans, ["PutItem", "ConditionCheckItem"], ["ROSTER_LOGIN#*"]);
-    permission(
-      humans,
-      ["ConditionCheckItem"],
-      ["IDENTITY#*", "MEMBER#*", "ROSTER_EMAIL#*", "BINDING#*"],
-    );
+    permission(humans, ["GetItem"], ["USER#*", "SESSION#*"]);
+    permission(devices, ["GetItem"], ["DEVICE#*", "USER#*"]);
+    permission(kiosk, ["GetItem", "ConditionCheckItem"], ["USER#*"]);
     permission(
       staff,
       ["GetItem", "Query", "PutItem", "DeleteItem", "ConditionCheckItem"],
@@ -278,7 +265,7 @@ export class BackendStack extends cdk.Stack {
       ["GetItem", "Query", "PutItem", "DeleteItem", "ConditionCheckItem"],
       [
         "DEVICE#*",
-        "MEMBER#*",
+        "ATTENDANCE#*",
         "CARD#*",
         "OP#*",
         "RATE#device#*",
@@ -294,7 +281,7 @@ export class BackendStack extends cdk.Stack {
       ["GetItem", "Query", "PutItem", "DeleteItem", "ConditionCheckItem"],
       [
         "ACTIVE",
-        "MEMBER#*",
+        "ATTENDANCE#*",
         "AUDIT",
         ...activityOutboxPrefixes(this, "puncher"),
       ],

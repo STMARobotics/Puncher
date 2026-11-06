@@ -1,10 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { generateKeyPairSync, verify } from "node:crypto";
 import { dispatch } from "../service/api";
-import { row } from "../service/model";
-import { atomic } from "../service/store";
 import { signWalletPass } from "../service/wallet";
-import { fixture } from "./helpers";
+import { fixture, seedUser } from "./helpers";
 
 const original = { ...process.env };
 afterEach(() => {
@@ -27,7 +25,7 @@ describe("Google Wallet attendance passes", () => {
         client_email: "wallet@example.iam.gserviceaccount.com",
         private_key: privateKey,
       },
-      "123456789.attendance",
+      "BCR2DN6D6CVPJD2U.attendance",
       "member-a",
       "000123",
       "https://puncher.7028robotics.com",
@@ -57,7 +55,7 @@ describe("Google Wallet attendance passes", () => {
       payload: {
         genericObjects: [
           {
-            classId: "123456789.attendance",
+            classId: "BCR2DN6D6CVPJD2U.attendance",
             state: "ACTIVE",
             barcode: { type: "CODE_128", value: "000123" },
           },
@@ -65,7 +63,7 @@ describe("Google Wallet attendance passes", () => {
       },
     });
     expect(claims.payload.genericObjects[0].id).toMatch(
-      /^123456789\.member-[a-f0-9]{64}$/,
+      /^BCR2DN6D6CVPJD2U\.member-[a-f0-9]{64}$/,
     );
     expect(claims.payload.genericObjects[0].id).not.toContain("member-a");
   });
@@ -76,29 +74,14 @@ describe("Google Wallet attendance passes", () => {
       TABLE_NAME: "puncher-test",
       DYNAMODB_ENDPOINT: "http://127.0.0.1:8000",
       LOCAL_AUTH_FIXTURES: "true",
-      GOOGLE_WALLET_CLASS_ID: "123456789.attendance",
+      GOOGLE_WALLET_CLASS_ID: "BCR2DN6D6CVPJD2U.attendance",
       GOOGLE_WALLET_SERVICE_ACCOUNT_JSON: JSON.stringify({
         client_email: "wallet@example.iam.gserviceaccount.com",
         private_key: signingKey().privateKey,
       }),
     });
     const { db } = await fixture();
-    await atomic(db, async (tx) => {
-      await tx.put(
-        row("IDENTITY#local-student", "METADATA", {
-          enabled: true,
-          roles: ["student"],
-          memberId: "member-a",
-        }),
-      );
-      await tx.put(
-        row("IDENTITY#local-admin", "METADATA", {
-          enabled: true,
-          roles: ["admin"],
-          memberId: "member-a",
-        }),
-      );
-    });
+    await seedUser(db, "local-student", "Local Student", "STUDENT", "009999");
 
     const result = await dispatch(
       {
@@ -129,11 +112,11 @@ describe("Google Wallet attendance passes", () => {
       {
         method: "GET",
         path: "/api/wallet/save",
-        headers: { authorization: "Bearer local-mentor" },
+        headers: {},
       },
       db,
     );
-    expect(denied.statusCode).toBe(403);
+    expect(denied.statusCode).toBe(401);
   });
 
   it("rejects malformed configuration and barcode input", () => {
@@ -154,7 +137,7 @@ describe("Google Wallet attendance passes", () => {
     expect(() =>
       signWalletPass(
         credential,
-        "123456789.attendance",
+        "BCR2DN6D6CVPJD2U.attendance",
         "member-a",
         "123",
         "https://puncher.7028robotics.com",

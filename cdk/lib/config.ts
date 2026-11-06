@@ -20,5 +20,5 @@ export const config: Config = {
   googleWalletClassId: "BCR2DN6D6CVPJD2U.attendance",
   statsUrl: "https://stats.7028robotics.com",
   repository: "STMARobotics@32277731/Puncher@1443278208",
-  tableName: "puncher-prod-records",
+  tableName: "puncher-data",
 };

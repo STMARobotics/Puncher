@@ -1,10 +1,18 @@
 import { OAuth2Client, type TokenPayload } from "google-auth-library";
 import { timingSafeEqual } from "node:crypto";
 import { type Store } from "./store";
-import { type Principal, key, hash, assert, Fault, kioskExpiry } from "./model";
+import {
+  type Human,
+  type Principal,
+  key,
+  hash,
+  assert,
+  Fault,
+  kioskExpiry,
+  roles,
+  staffsShop,
+} from "./model";
 import { runtime, store } from "./runtime";
-import { atomic } from "./store";
-import { row } from "./model";
 export type Verify = (
   token: string,
   audience: string,
@@ -51,14 +59,12 @@ export async function human(
   headers: Record<string, string | undefined>,
   db: Store,
   verify: Verify = verifyGoogle,
-): Promise<Principal> {
+): Promise<Human> {
   const c = runtime();
   const bearer = headers.authorization?.match(
     new RegExp("^Bearer\\s+(.+)$", "i"),
   )?.[1];
   let sub: string;
-  let verifiedEmail: string | undefined;
-  let rosterEmail: string | undefined, rosterMemberId: string | undefined;
   if (
     c.fixtures &&
     bearer &&
@@ -75,7 +81,6 @@ export async function human(
     }
     assertGoogleIdentity(t, c.googleClientId);
     sub = t.sub;
-    verifiedEmail = t.email.toLowerCase();
   } else {
     const cookie = cookieValue(headers, sessionCookieName(c.local));
     assert(cookie, "Sign in with your robotics Google account.", 401);
@@ -86,132 +91,20 @@ export async function human(
       401,
     );
     sub = session.sub;
-    rosterEmail = session.rosterEmail;
-    rosterMemberId = session.rosterMemberId;
   }
-  const identity = await db.get(key(`IDENTITY#${sub}`));
+  const user = await db.get(key("USER#" + sub));
+  assert(user, "Sign in with Google to create your Puncher account.", 403);
   assert(
-    !identity || identity.enabled,
+    user.active && roles.includes(user.role),
     "Your Puncher access is disabled.",
     403,
   );
-  if (!identity?.roles?.some((r: string) => ["mentor", "admin"].includes(r))) {
-    if (
-      identity?.memberId &&
-      identity.roles?.some((r: string) =>
-        ["student", "stats:student"].includes(r),
-      )
-    ) {
-      const member = await db.get(key("MEMBER#" + identity.memberId));
-      assert(
-        member?.active && member.memberKind === "student",
-        "Your attendance account is inactive.",
-        403,
-      );
-      return {
-        kind: "human",
-        id: sub,
-        roles: ["student"],
-        memberId: member.memberId,
-      };
-    }
-    const email = verifiedEmail ?? rosterEmail;
-    assert(email, "Your account is awaiting administrator setup.", 403);
-    const claimKey = key("ROSTER_EMAIL#" + hash(email));
-    const claim = await db.get(claimKey);
-    assert(
-      claim &&
-        !claim.retired &&
-        (!rosterMemberId || rosterMemberId === claim.memberId),
-      "Your account is awaiting administrator setup. Ask a mentor to check the roster.",
-      403,
-    );
-    const memberId = claim.memberId as string;
-    const memberKey = key("MEMBER#" + memberId),
-      loginKey = key("ROSTER_LOGIN#" + memberId),
-      bindingKey = key("BINDING#" + memberId);
-    if (verifiedEmail) {
-      // The CSV suggests a match. Pin the first verified Google subject so
-      // a later reassignment of that email cannot inherit this member's card.
-      await atomic(db, async (tx) => {
-        const current = await tx.get(claimKey),
-          member = await tx.get(memberKey);
-        const login = await tx.get(loginKey),
-          binding = await tx.get(bindingKey);
-        assert(
-          current?.memberId === memberId &&
-            !current.retired &&
-            member?.active &&
-            member.memberKind === "student" &&
-            member.csvEmail === email,
-          "Your attendance account is inactive or changed.",
-          403,
-        );
-        const currentIdentity = await tx.get(key("IDENTITY#" + sub));
-        assert(
-          (!login || login.sub === sub) &&
-            (!binding || binding.googleSub === sub) &&
-            (!member.directoryUserId || member.directoryUserId === sub) &&
-            (!currentIdentity ||
-              (currentIdentity.enabled &&
-                (!currentIdentity.memberId ||
-                  currentIdentity.memberId === memberId))),
-          "Ask a mentor to review your account link.",
-          403,
-        );
-        if (!login) await tx.put(row(loginKey.pk, loginKey.sk, { sub }));
-      });
-    } else {
-      const [member, login, binding] = await Promise.all([
-        db.get(memberKey),
-        db.get(loginKey),
-        db.get(bindingKey),
-      ]);
-      assert(
-        member?.active &&
-          member.memberKind === "student" &&
-          member.csvEmail === email &&
-          login?.sub === sub &&
-          (!binding || binding.googleSub === sub) &&
-          (!member.directoryUserId || member.directoryUserId === sub),
-        "Your attendance account is inactive or changed.",
-        403,
-      );
-    }
-    return {
-      kind: "human",
-      id: sub,
-      roles: ["student"],
-      memberId,
-      rosterEmail: email,
-    };
-  }
-  assert(identity, "Your account is awaiting administrator setup.", 403);
-  if (
-    identity.roles?.some((r: string) =>
-      ["student", "stats:student"].includes(r),
-    )
-  )
-    assert(
-      identity.memberId,
-      "Your identity needs an administrator-approved roster link.",
-      403,
-    );
-  if (identity.memberId) {
-    const m = await db.get(key(`MEMBER#${identity.memberId}`));
-    assert(m?.active, "Your attendance account is inactive.", 403);
-  }
-  return {
-    kind: "human",
-    id: sub,
-    roles: identity.roles || [],
-    memberId: identity.memberId,
-  };
+  return { kind: "human", id: sub, role: user.role, barcode: user.barcode };
 }
 export async function device(
   headers: Record<string, string | undefined>,
   db: Store,
-): Promise<Principal> {
+): Promise<Extract<Principal, { kind: "device" }>> {
   const token = kioskCredential(headers);
   assert(token, "Scan a mentor's kiosk activation code.", 401);
   const [id, secret] = token.split(".");
@@ -235,20 +128,13 @@ export async function device(
     "Kiosk session expired or was ended. Ask a mentor to launch it again.",
     401,
   );
-  const owner = await db.get(key("IDENTITY#" + d.launchedBy));
+  const owner = await db.get(key("USER#" + d.launchedBy));
   assert(
-    owner?.enabled &&
-      owner.roles?.some((r: string) => ["mentor", "admin"].includes(r)),
+    owner?.active && staffsShop(owner.role),
     "The mentor who launched this kiosk no longer has access.",
     401,
   );
-  if (owner.memberId)
-    assert(
-      (await db.get(key("MEMBER#" + owner.memberId)))?.active,
-      "Mentor account is inactive.",
-      401,
-    );
-  return { kind: "device", id, roles: [], expiresAt };
+  return { kind: "device", id, expiresAt };
 }
 export function kioskCredential(headers: Record<string, string | undefined>) {
   const cookie = headers.cookie
@@ -278,9 +164,9 @@ export async function humanAuthorizer(event: any) {
       store(),
     );
     const allowed =
-      p.roles.includes("mentor") ||
-      p.roles.includes("admin") ||
-      event.routeKey?.endsWith(" /api/me");
+      staffsShop(p.role) ||
+      event.routeKey?.endsWith(" /api/me") ||
+      event.routeKey?.endsWith(" /api/wallet/save");
     return { isAuthorized: !!allowed, context: { principalId: p.id } };
   } catch {
     return { isAuthorized: false };

@@ -73,7 +73,7 @@ export function signWalletPass(
   now = new Date(),
 ) {
   assert(
-    /^\d+\.[A-Za-z0-9._-]+$/.test(classId),
+    /^[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+$/.test(classId),
     "Google Wallet class is not configured.",
     503,
   );

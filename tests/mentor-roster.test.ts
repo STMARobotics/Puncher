@@ -1,10 +1,9 @@
 import { afterEach, expect, it } from "vitest";
 import { MemoryStore, atomic, all } from "../service/store";
 import { key, row, uid } from "../service/model";
-import { Puncher } from "../service/domain";
 import { assignCard } from "../service/card-codes";
 import { dispatch } from "../service/api";
-import { human, device as authenticateKiosk } from "../service/auth";
+import { device as authenticateKiosk } from "../service/auth";
 import { fixture, admin, mentor } from "./helpers";
 
 const original = { ...process.env };
@@ -30,7 +29,8 @@ it("reserves retired codes permanently and collision-checks allocations", async 
   const { db } = await fixture();
   await atomic(db, async (tx) => {
     await assignCard(tx, "old-member", "123456");
-    await tx.del(key("CARD#123456"));
+    const card = await tx.get(key("CARD#123456"));
+    await tx.put({ ...card!, retired: true });
   });
   let attempt = 0;
   const code = await atomic(db, (tx) =>
@@ -39,14 +39,17 @@ it("reserves retired codes permanently and collision-checks allocations", async 
     ),
   );
   expect(code).toBe("234567");
-  expect((await db.get(key("CARDCODE#123456")))?.memberId).toBe("old-member");
+  expect(await db.get(key("CARD#123456"))).toMatchObject({
+    memberId: "old-member",
+    retired: true,
+  });
 });
 it("retries a replacement once and never randomly reactivates a retired code for the same member", async () => {
   const { app, db } = await fixture();
   const id = uid();
   const results = await Promise.all([
-    app.replaceCard(mentor, "member-a", id),
-    app.replaceCard(mentor, "member-a", id),
+    app.replaceCard(admin, "member-a", id),
+    app.replaceCard(admin, "member-a", id),
   ]);
   expect(results[0]).toEqual(results[1]);
   expect(results[0].barcode).not.toBe("000123");
@@ -59,134 +62,31 @@ it("retries a replacement once and never randomly reactivates a retired code for
     ),
   ).toBe("654321");
 });
-it("mentor approval preserves existing Stats access and member linkage", async () => {
-  const { db } = await fixture();
-  await atomic(db, async (tx) => {
-    await tx.put(
-      row("IDENTITY#existing-student", "METADATA", {
-        memberId: "member-a",
-        roles: ["stats:student"],
-        enabled: true,
-      }),
-    );
-    await tx.put(
-      row("MENTOR_REQUEST#existing-student", "METADATA", {
-        email: "existing@stmarobotics.org",
-        ttl: Math.floor(Date.now() / 1000) + 600,
-      }),
-    );
-  });
-  await new Puncher(db).approveMentor(admin, "existing-student", false, false);
-  expect(await db.get(key("IDENTITY#existing-student"))).toMatchObject({
-    memberId: "member-a",
-    roles: ["stats:student", "mentor"],
-    enabled: true,
-  });
-});
-it("allows mentors to manage basic members but not permissions, and limits student sign-in to their own barcode", async () => {
+it("allows only admins to change an existing member role and keeps their barcode", async () => {
   env();
   const { db } = await fixture();
-  await atomic(db, async (tx) => {
-    await tx.put(
-      row("IDENTITY#local-student", "METADATA", {
-        enabled: true,
-        roles: ["student", "stats:student"],
-        memberId: "member-a",
-      }),
+  const userKey = key("USER#member-a");
+  const before = (await db.get(userKey))!;
+  const request = (actor: string, role: unknown, version = before.v) =>
+    dispatch(
+      {
+        method: "PATCH",
+        path: "/api/admin/members/member-a",
+        headers: headers(actor),
+        body: { displayName: before.displayName, active: true, role, version },
+      },
+      db,
     );
-  });
-  expect(
-    (
-      await dispatch(
-        { method: "GET", path: "/api/me", headers: headers("local-student") },
-        db,
-      )
-    ).statusCode,
-  ).toBe(200);
-  expect(
-    (
-      await dispatch(
-        { method: "GET", path: "/api/mentor/members", headers: headers() },
-        db,
-      )
-    ).statusCode,
-  ).toBe(200);
-  expect(
-    (
-      await dispatch(
-        { method: "GET", path: "/api/admin/identities", headers: headers() },
-        db,
-      )
-    ).statusCode,
-  ).toBe(403);
-  expect(
-    (
-      await dispatch(
-        { method: "POST", path: "/api/mentor/roster/sync", headers: headers() },
-        db,
-      )
-    ).statusCode,
-  ).toBe(410);
-});
-it("creates no mentor request on first sign-in and restricts approval of existing requests to administrators", async () => {
-  env();
-  process.env.LOCAL_AUTH_FIXTURES = "false";
-  const { db } = await fixture();
-  const payload: any = {
-    sub: "new-mentor",
-    name: "New Mentor",
-    email: "newmentor@stmarobotics.org",
-    iss: "accounts.google.com",
-    hd: "stmarobotics.org",
-    aud: "test-client",
-    email_verified: true,
-    exp: Date.now() / 1000 + 300,
-  };
-  await expect(
-    human({ authorization: "Bearer verified" }, db, async () => payload),
-  ).rejects.toThrow("setup");
-  expect(await db.get(key("IDENTITY#new-mentor"))).toBeUndefined();
-  const pendingRequest = key("MENTOR_REQUEST#new-mentor");
-  expect(await db.get(pendingRequest)).toBeUndefined();
-  await atomic(db, (tx) =>
-    tx.put(
-      row(pendingRequest.pk, pendingRequest.sk, {
-        email: payload.email,
-        ttl: Math.floor(Date.now() / 1000) + 600,
-      }),
-    ),
+  expect((await request("local-mentor", "ADMIN")).statusCode).toBe(403);
+  expect((await request("local-admin", ["MENTOR", "ADMIN"])).statusCode).toBe(
+    400,
   );
-  process.env.LOCAL_AUTH_FIXTURES = "true";
-  expect(
-    (
-      await dispatch(
-        {
-          method: "POST",
-          path: "/api/admin/mentor-requests/new-mentor/approve",
-          headers: headers(),
-          body: {},
-        },
-        db,
-      )
-    ).statusCode,
-  ).toBe(403);
-  expect(
-    (
-      await dispatch(
-        {
-          method: "POST",
-          path: "/api/admin/mentor-requests/new-mentor/approve",
-          headers: headers("local-admin"),
-          body: {},
-        },
-        db,
-      )
-    ).statusCode,
-  ).toBe(200);
-  expect(
-    (await human({ authorization: "Bearer verified" }, db, async () => payload))
-      .roles,
-  ).toEqual(["mentor"]);
+  expect((await request("local-admin", "ADMIN")).statusCode).toBe(200);
+  expect(await db.get(userKey)).toMatchObject({
+    role: "ADMIN",
+    barcode: before.barcode,
+  });
+  expect((await request("local-admin", "MENTOR")).statusCode).toBe(409);
 });
 async function activate(
   db: Awaited<ReturnType<typeof fixture>>["db"],
@@ -258,13 +158,15 @@ it("launches an isolated kiosk via mentor login, renews the same retry identity,
     db,
   );
   expect(JSON.parse(retry.body).state).toBe("in");
-  expect(await all(db, "MEMBER#member-a", { prefix: "SHOP#" })).toHaveLength(1);
+  expect(
+    await all(db, "ATTENDANCE#member-a", { prefix: "SHOP#" }),
+  ).toHaveLength(1);
   expect(
     (
       await dispatch(
         {
           method: "GET",
-          path: "/api/mentor/members",
+          path: "/api/admin/members",
           headers: { cookie: nextCookie },
         },
         db,
@@ -308,8 +210,8 @@ it("immediately rejects kiosk sessions whose launching mentor loses access", asy
     .find((value) => value.startsWith("puncher-local-device="))!
     .split(";")[0];
   await atomic(db, async (tx) => {
-    const r = await tx.get(key("IDENTITY#local-mentor"));
-    await tx.put({ ...r!, roles: [] });
+    const r = await tx.get(key("USER#local-mentor"));
+    await tx.put({ ...r!, role: "STUDENT" });
   });
   await expect(authenticateKiosk({ cookie }, db)).rejects.toThrow("mentor");
 });
@@ -331,8 +233,10 @@ it("accepts a kiosk QR once and checks expiry and the issuing mentor's current a
   await expect(app.activateKiosk(expiring.code)).rejects.toThrow("expired");
   const revoked = await app.issueKioskActivation(mentor);
   await atomic(db, async (tx) => {
-    const identity = await tx.get(key("IDENTITY#" + mentor.id));
-    await tx.put({ ...identity!, enabled: false });
+    const user = await tx.get(key("USER#" + mentor.id));
+    await tx.put({ ...user!, active: false });
   });
-  await expect(app.activateKiosk(revoked.code)).rejects.toThrow("disabled");
+  await expect(app.activateKiosk(revoked.code)).rejects.toThrow(
+    "no longer has access",
+  );
 });

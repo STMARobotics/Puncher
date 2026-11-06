@@ -1,33 +1,56 @@
+import { assignCard } from "../service/card-codes";
 import { Puncher } from "../service/domain";
 import { MemoryStore, type Store, atomic } from "../service/store";
-import { row, hash, type Principal } from "../service/model";
-export const admin: Principal = {
+import {
+  row,
+  key,
+  hash,
+  type Human,
+  type Principal,
+  type Role,
+} from "../service/model";
+export const admin: Human = {
   kind: "human",
   id: "local-admin",
-  roles: ["admin", "stats:staff"],
+  role: "ADMIN",
 };
-export const mentor: Principal = {
+export const mentor: Human = {
   kind: "human",
   id: "local-mentor",
-  roles: ["mentor"],
+  role: "MENTOR",
 };
 export const device: Principal = {
   kind: "device",
   id: "test-device",
-  roles: [],
 };
+export async function seedUser(
+  db: Store,
+  memberId: string,
+  displayName: string,
+  role: Role,
+  code?: string,
+) {
+  return atomic(db, async (tx) => {
+    const userKey = key("USER#" + memberId);
+    await tx.put(
+      row(userKey.pk, userKey.sk, {
+        memberId,
+        displayName,
+        role,
+        active: true,
+        email: memberId + "@stmarobotics.org",
+        barcode: await assignCard(tx, memberId, code),
+        gsi1pk: "USERS",
+        gsi1sk: memberId,
+      }),
+    );
+  });
+}
 export async function fixture(db: Store = new MemoryStore(), open = true) {
   let now = new Date("2026-05-31T18:00:00.000Z");
   const app = new Puncher(db, () => now);
   await atomic(db, async (tx) => {
-    for (const p of [admin, mentor])
-      await tx.put(
-        row(`IDENTITY#${p.id}`, "METADATA", {
-          enabled: true,
-          roles: p.roles,
-          displayName: p === mentor ? "Taylor Mentor" : "Casey Admin",
-        }),
-      );
+    await tx.put(row("APP#PUNCHER", "SCHEMA", {}));
     await tx.put(
       row("DEVICE#test-device", "METADATA", {
         enabled: true,
@@ -38,28 +61,10 @@ export async function fixture(db: Store = new MemoryStore(), open = true) {
       }),
     );
   });
-  await app.saveMember(
-    admin,
-    {
-      displayName: "Alex Example",
-      email: "alex@stmarobotics.org",
-      memberKind: "student",
-      active: true,
-      barcode: "000123",
-    },
-    "member-a",
-  );
-  await app.saveMember(
-    admin,
-    {
-      displayName: "Jordan Sample",
-      email: "jordan@stmarobotics.org",
-      memberKind: "student",
-      active: true,
-      barcode: "000456",
-    },
-    "member-b",
-  );
+  await seedUser(db, admin.id, "Casey Admin", admin.role, "000890");
+  await seedUser(db, mentor.id, "Taylor Mentor", mentor.role, "000789");
+  await seedUser(db, "member-a", "Alex Example", "STUDENT", "000123");
+  await seedUser(db, "member-b", "Jordan Sample", "STUDENT", "000456");
   const openShop = async (person = mentor) => {
     const pass = await app.issueKioskActivation(person);
     const kiosk = await app.activateKiosk(pass.code);

@@ -28,7 +28,7 @@ test("restores the authenticated UI from an HttpOnly session cookie after refres
       `puncher-local-session=${sessionValue}`,
     );
     await route.fulfill({
-      json: { id: "local-mentor", roles: ["mentor"] },
+      json: { id: "local-mentor", role: "MENTOR" },
     });
   });
   await page.route("**/api/events", (route) => route.fulfill({ json: [] }));

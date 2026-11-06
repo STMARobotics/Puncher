@@ -1,6 +1,8 @@
 # ARCHITECTURE
 
-The current student phone barcodes, reviewed roster CSV imports and mentor QR activation are described in [mentor roster architecture](mentor-roster.md). Internal Staff/API_SCOPE and stats:staff names are retained for deployed-resource and Stats compatibility; public Puncher terminology is mentor.
+Puncher stores one user record per verified Google subject at `USER#<sub> / METADATA`. It contains the name, email, one role, active status and barcode. An atomic write creates the user and reserves the barcode on first sign-in. Account lookups use the stable Google subject.
+
+Visits and volunteer awards use the `ATTENDANCE#<sub>` partition. This lets kiosk infrastructure write attendance while its access to the user record remains read-only. Discover user records through the `USERS` index partition. The [member and kiosk workflow](mentor-roster.md) describes the three roles.
 
 Puncher uses React/Vite, TypeScript, Node 24 Lambda, DynamoDB and TypeScript CDK. One language makes domain rules, UI DTOs and infrastructure approachable for students; React introduces a second frontend convention alongside the team's Angular app but avoids a large component framework. Plain accessible controls and CSS keep maintenance small. Business rules live in service/domain.ts, persistence in service/store.ts, and the same HTTP dispatcher serves Lambda and the local Node adapter.
 
@@ -12,7 +14,7 @@ The current-session record holds the last scan time, current session reference, 
 
 Stats is a separate read-only backend and deployment. Only Puncher writes the canonical table. See stats-integration.md. No browser storage is authoritative and no offline attendance queue exists.
 
-Human sign-in uses Google's authorization-code flow with state, nonce and PKCE. The Lambda exchanges the code using a client secret held in Standard SSM Parameter Store SecureString, then creates a seven-day opaque HttpOnly cookie session in Puncher's existing DynamoDB table. Only a hash of the cookie value is stored; Lambda authorizers perform uncached session lookup and permissions are rechecked on every request. This session is app-specific and does not require the separate Angular app to share Puncher's database or cookies.
+Human sign-in uses Google's authorization-code flow with state, nonce and PKCE. The Lambda exchanges the code using a client secret held in Standard SSM Parameter Store SecureString, then creates a seven-day opaque HttpOnly cookie session in Puncher's DynamoDB table. Only a hash of the cookie value is stored; Lambda authorizers perform uncached session lookup and permissions are rechecked on every request. This session is app-specific and does not require the separate Angular app to share Puncher's database or cookies.
 
 The owner later requested a simpler kiosk with three anonymous team shop totals. These are served through a separate device-authorized ShopTotals Lambda, with read-only access to roster discovery/canonical shop credits and narrowly scoped writes to SUMMARY#SHOP plus device rate records. A 60-second database cache and a conditional expiring refresh lease bound work across Lambda instances. This is a disposable display projection, never another attendance record or a replacement for Stats reporting. See api.md for eligibility, periods, reconciliation and failure behavior.
 

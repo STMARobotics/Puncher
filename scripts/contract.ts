@@ -1,6 +1,6 @@
 // Generates language-neutral schemas and synthetic fixtures; check these files into source control.
 import { writeFileSync, mkdirSync } from "node:fs";
-import { row } from "../service/model";
+import { SCHEMA_VERSION, roles, row } from "../service/model";
 const string = { type: "string" },
   seconds = { type: "integer", minimum: 0 },
   date = { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
@@ -16,33 +16,32 @@ const definitions: any = {
       reportingYearConvention: string,
     },
   },
-  member: {
-    pk: "^MEMBER#.+$",
+  user: {
+    pk: "^USER#.+$",
     sk: "^METADATA$",
-    required: ["memberId", "displayName", "memberKind", "active"],
+    required: [
+      "memberId",
+      "displayName",
+      "email",
+      "role",
+      "barcode",
+      "active",
+      "gsi1pk",
+      "gsi1sk",
+    ],
     properties: {
       memberId: string,
       displayName: string,
-      memberKind: { enum: ["student", "mentor"] },
+      email: string,
+      role: { enum: roles },
+      barcode: { type: "string", pattern: "^\\d{6}$" },
       active: { type: "boolean" },
-      gsi1pk: { const: "MEMBERS" },
+      gsi1pk: { const: "USERS" },
       gsi1sk: string,
     },
   },
-  identity: {
-    pk: "^IDENTITY#.+$",
-    sk: "^METADATA$",
-    required: ["googleSub", "email", "enabled", "roles"],
-    properties: {
-      googleSub: string,
-      memberId: string,
-      email: string,
-      enabled: { type: "boolean" },
-      roles: { type: "array", items: string },
-    },
-  },
   shop: {
-    pk: "^MEMBER#.+$",
+    pk: "^ATTENDANCE#.+$",
     sk: "^SHOP#.+#.+$",
     required: [
       "sessionId",
@@ -67,7 +66,7 @@ const definitions: any = {
     },
   },
   legacyShop: {
-    pk: "^MEMBER#.+$",
+    pk: "^ATTENDANCE#.+$",
     sk: "^LEGACYSHOP#.+#.+$",
     required: ["memberId", "status", "provenance"],
     properties: {
@@ -102,7 +101,7 @@ const definitions: any = {
     },
   },
   volunteer: {
-    pk: "^MEMBER#.+$",
+    pk: "^ATTENDANCE#.+$",
     sk: "^VOLUNTEER#.+#.+$",
     required: ["awardId", "memberId", "title", "status"],
     properties: {
@@ -130,7 +129,7 @@ const schemas = Object.fromEntries(
       properties: {
         pk: { type: "string", pattern: d.pk },
         sk: { type: "string", pattern: d.sk },
-        schemaVersion: { const: 1 },
+        schemaVersion: { const: SCHEMA_VERSION },
         ...d.properties,
       },
       additionalProperties: true,
@@ -139,9 +138,9 @@ const schemas = Object.fromEntries(
 );
 const contract = {
   $schema: "http://json-schema.org/draft-07/schema#",
-  $id: "https://puncher.7028robotics.com/contracts/stats-reader.v1.json",
-  title: "Puncher canonical reader records v1",
-  schemaVersion: 1,
+  $id: "https://puncher.7028robotics.com/contracts/stats-reader.v2.json",
+  title: "Puncher canonical reader records v2",
+  schemaVersion: SCHEMA_VERSION,
   timezone: "America/Chicago",
   durationUnit: "seconds",
   reportingYear: {
@@ -150,7 +149,7 @@ const contract = {
     storedAs: "ending year",
   },
   indexes: {
-    GSI1: { pk: "gsi1pk", sk: "gsi1sk", rosterPartition: "MEMBERS" },
+    GSI1: { pk: "gsi1pk", sk: "gsi1sk", rosterPartition: "USERS" },
     GSI2: { pk: "gsi2pk", sk: "gsi2sk" },
   },
   eligibility: {
@@ -161,7 +160,8 @@ const contract = {
   },
   writerInternalPrefixes: [
     "CARD#",
-    "BINDING#",
+    "SESSION#",
+    "OAUTH#",
     "CURRENT",
     "ACTIVE",
     "OP#",
@@ -180,27 +180,22 @@ const contract = {
   })),
 };
 const id = "11111111-1111-4111-8111-111111111111",
-  pk = `MEMBER#${id}`;
+  pk = `ATTENDANCE#${id}`;
 const fixtures = [
   row("APP#PUNCHER", "SCHEMA", {
     timezone: "America/Chicago",
     durationUnit: "seconds",
     reportingYearConvention: "ending year; June 2 through June 1 inclusive",
   }),
-  row(pk, "METADATA", {
+  row("USER#" + id, "METADATA", {
     memberId: id,
     displayName: "Alex Example",
-    memberKind: "student",
-    active: true,
-    gsi1pk: "MEMBERS",
-    gsi1sk: id,
-  }),
-  row("IDENTITY#synthetic-google-sub", "METADATA", {
-    googleSub: "synthetic-google-sub",
-    memberId: id,
     email: "alex.example@stmarobotics.org",
-    enabled: true,
-    roles: ["student", "stats:student"],
+    role: "STUDENT",
+    barcode: "000123",
+    active: true,
+    gsi1pk: "USERS",
+    gsi1sk: id,
   }),
   row(pk, "SHOP#2026-06-01T18:00:00.000Z#synthetic-session", {
     sessionId: "synthetic-session",
@@ -276,14 +271,14 @@ const fixtures = [
 ];
 mkdirSync("contracts/fixtures", { recursive: true });
 writeFileSync(
-  "contracts/stats-reader.v1.json",
+  "contracts/stats-reader.v2.json",
   JSON.stringify(contract, null, 2) + "\n",
 );
 writeFileSync(
-  "contracts/fixtures/reader-v1.json",
+  "contracts/fixtures/reader-v2.json",
   JSON.stringify(
     {
-      schemaVersion: 1,
+      schemaVersion: SCHEMA_VERSION,
       records: fixtures,
       expected: {
         careerShopSeconds: 5400,

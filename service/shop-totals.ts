@@ -2,6 +2,7 @@ import { Temporal } from "@js-temporal/polyfill";
 import { type Store, all, atomic } from "./store";
 import { Puncher } from "./domain";
 import {
+  SCHEMA_VERSION,
   type Principal,
   type Row,
   key,
@@ -49,7 +50,7 @@ export async function shopTotals(
   });
   const schema = await db.get(key("APP#PUNCHER", "SCHEMA"));
   assert(
-    schema?.schemaVersion === 1,
+    schema?.schemaVersion === SCHEMA_VERSION,
     "Unsupported or missing attendance schema.",
     503,
   );
@@ -86,7 +87,7 @@ export async function shopTotals(
     throw new Fault(503, "Shop totals are updating.");
   }
   try {
-    const members = await all(db, "MEMBERS", { index: "GSI1" });
+    const members = await all(db, "USERS", { index: "GSI1" });
     let weekSeconds = 0,
       yearSeconds = 0,
       allTimeSeconds = 0;
@@ -94,10 +95,10 @@ export async function shopTotals(
     for (let i = 0; i < members.length; i += 4) {
       const groups = await Promise.all(
         members.slice(i, i + 4).map(async (member) => [
-          ...(await all(db, `MEMBER#${member.memberId}`, {
+          ...(await all(db, `ATTENDANCE#${member.memberId}`, {
             prefix: "SHOP#",
           })),
-          ...(await all(db, `MEMBER#${member.memberId}`, {
+          ...(await all(db, `ATTENDANCE#${member.memberId}`, {
             prefix: "LEGACYSHOP#",
           })),
         ]),

@@ -1,28 +1,22 @@
-# Mentor access, roster CSV uploads and ID cards
+# Member sign-in, roles and attendance cards
 
-Mentors sign in with Google to manage attendance members, create volunteer events and launch the kiosk. A Puncher administrator grants mentor permissions through the identity administration API using a verified Google subject. Existing Google login uses the OAuth web-client secret in Parameter Store as described in [deployment](deployment.md).
+Sign in with a verified stmarobotics.org Google account. On first sign-in Puncher creates a Student account and assigns a six-digit attendance code. The same account and card are used on later sign-ins.
 
-To grant administrator access, open **Manage members**, choose **Grant admin** on an active roster entry and share the invitation link with that person. If the entry has no email, enter their school Google email. The link expires in 24 hours and works once. Puncher grants access after the recipient signs in with the specified email and checks that neither account is linked to a conflicting roster entry.
+| Role | Access |
+| --- | --- |
+| Student | View their barcode, clock in and out, and appear in the Students kiosk column. |
+| Mentor | View their barcode, appear in the Mentors kiosk column, create volunteer events and generate kiosk activation QR codes. |
+| Admin | Mentor capabilities plus member, role, card, and audit administration. Admins also appear in the Mentors column. |
 
-## Upload the roster
+When the last Mentor or Admin clocks out, the shop switches to checkout-only mode. A Mentor or Admin can reopen it with a kiosk activation QR.
 
-1. Export the Google Workspace group roster. The current format includes Group Email [Required], Member Email, Member Name, Member Role and Member Type. [Google Workspace group export instructions](https://knowledge.workspace.google.com/admin/groups/view-a-groups-members#export-a-list-of-group-members)
-2. In Puncher, open **Manage members → Upload roster CSV** and choose **Preview CSV**. For older exports without a group email column, select the source group once for the file. Uploads accept up to 500 rows and 128 KB per file.
-3. Review the automatic matches and any skipped rows, then select **Import roster**. Both name and email must match an existing entry to reuse its card, role, history and activation status. New entries receive an active six-digit card. The `frc.students` group assigns Student, and `frc.mentors` or `ftc.mentors` assigns Mentor for attendance. Google group ownership and attendance roles are separate from approved Puncher login privileges. Nested groups and invalid rows are listed by row number and skipped.
-4. If a different name already uses the same email, Puncher creates a separate card and keeps the existing sign-in binding. An administrator can review account access separately.
-5. Use **Export active roster CSV** for external card generation. Import the barcode column as text to preserve leading zeros.
-
-## Progress and recovery
-
-The existing mentor API validates the file, then stores the normalized preview and progress for up to 24 hours. Each request applies up to ten rows atomically. A retry at an already processed position returns saved progress. The browser can resume a partially completed import after a reload. Completed batches remain saved. If a matched entry changes mid-import, upload again to review the latest record and continue. The original file and Google group roles are discarded after parsing.
-
-CSV enrollment uses the existing API and DynamoDB table. Directory API sync, its optional worker and its queue have been retired. Deployments that previously configured that worker should finish outstanding roster jobs and remove the old rosterSync context during rollout. The import keeps native attendance identifiers and does not generate activity credits.
+In **Manage members**, an Admin selects **Edit member** and chooses one role. The person must sign in first to appear in the roster. A member must clock out before an Admin can change their role or active status. An Admin can also replace a card or export active member details for external ID-card printing.
 
 ## Kiosk launch and recovery
 
 Select **Start kiosk** on the shared device. On their phone, a mentor signs in and selects **Generate kiosk activation QR**. The kiosk accepts the code once within two minutes and records the mentor and server start time. Activation creates a scoped kiosk session and clears any human session in that browser. The mentor phone stays signed in. Scan a new mentor QR into the same scanner to reopen the shop.
 
-Students sign in with their Workspace accounts to display their six-digit attendance code as a Code 128 barcode. Puncher accepts an approved student account link or an active CSV roster email matching the verified Google email. The first verified CSV login is tied to the Google subject. A replacement Google account using the same email requires review. Scanning the phone barcode uses the same attendance record as the printed card. Tap the barcode to copy its ID.
+Every signed-in member can display their six-digit attendance code as a Code 128 barcode. The phone and printed barcode identify the same attendance account. Tap the barcode to copy its code.
 
 The server expires kiosk authorization at Chicago midnight or after 12 hours, whichever comes first. Unfinished shop visits forfeit at midnight and earn zero hours. The renewal cookie can remain for 30 days, but cannot authorize scans after expiry without a new mentor login/launch. Same-day renewal rotates the secret and retains the operation namespace for safe scan retries. The next day uses a new kiosk session. Sessions can be ended from the kiosk or revoked from mentor tools; mentor administrators can revoke any session. Disabling the launching mentor also invalidates their kiosks immediately. Old manually provisioned devices are rejected until a mentor relaunches the kiosk.
 

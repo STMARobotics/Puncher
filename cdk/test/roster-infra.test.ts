@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { BackendStack } from "../lib/backend-stack";
 import { config } from "../lib/config";
 
-it("uses CSV imports without a Directory worker or credentials and keeps mentor launch authorized", () => {
+it("isolates user permissions from kiosk writes and keeps mentor launch authorized", () => {
   const secret =
     "arn:aws:secretsmanager:us-east-2:111111111111:secret:google-roster-ABCdef";
   const app = new App({
@@ -45,7 +45,7 @@ it("uses CSV imports without a Directory worker or credentials and keeps mentor 
         JSON.stringify(s.Action).includes("dynamodb:ConditionCheckItem") &&
         s.Condition?.["ForAllValues:StringLike"]?.[
           "dynamodb:LeadingKeys"
-        ]?.includes("IDENTITY#*"),
+        ]?.includes("USER#*"),
     ),
   ).toBe(true);
   const queues = Object.values(t.findResources("AWS::SQS::Queue")) as any[];
@@ -73,6 +73,6 @@ it("uses CSV imports without a Directory worker or credentials and keeps mentor 
           statement.Condition["ForAllValues:StringLike"][
             "dynamodb:LeadingKeys"
           ],
-        ).not.toContain("IDENTITY#*");
+        ).not.toContain("USER#*");
   }
 }, 60000);
