@@ -2,7 +2,7 @@
 
 Connect the purchased NetumScan NSA5 as a USB keyboard scanner. Using its manufacturer's programming guide, select hands-free/continuous reading and an Enter/CR terminator. Disable repeated automatic reading of a stationary card if the scanner supports a sensible release/rearm setting. Do not guess programming barcodes. Test an actual student card in a temporary plain text field: exactly six digits, including leading zeros, followed by one Enter. Clear the test field afterward. CR, LF and CRLF are accepted once by the kiosk's scan buffer. Card symbology must be confirmed with the actual printed cards.
 
-On the scanner device, select **Start kiosk**. On a separate phone, sign in as a mentor and select **Generate kiosk activation QR**. Scan the QR on the waiting kiosk. The kiosk records the activating mentor and start time and opens the attendance screen. A member can sign in on their phone and scan their attendance barcode, or use their printed card. Check both phone QR and Code 128 scans on the actual kiosk scanner before rollout.
+On the scanner device, select **Start kiosk**. On a separate phone, sign in as a mentor and select **GENERATE KIOSK**. Scan the QR on the waiting kiosk. The kiosk records the activating mentor and start time and opens the attendance screen. A member can sign in on their phone and scan their attendance barcode, or use their printed card. Check both phone QR and Code 128 scans on the actual kiosk scanner before rollout.
 
 The page restores scanner focus when the browser regains focus. A web page cannot recover OS foreground focus after another application takes it. An adult must return to the kiosk window; the visible focus warning explains this. Check the scanner on startup and after OS dialogs, lock screens, updates and USB reconnection. No per-student button press, password, Google sign-in or confirmation scan is needed. The scanner decode beep only means the scanner read a barcode; Puncher's saved confirmation means the server committed it. Audio is deliberately omitted in v1.
 
@@ -16,8 +16,8 @@ Before production, manually verify and record these on actual hardware (not comp
 
 - NSA5 normal/worn cards, leading zeros, hands-free trigger, repeated stationary reads and rapid different students.
 - Dedicated computer startup/kiosk, sleep settings, lost focus, USB reconnect, network disconnect during save and reconnect/reload.
-- iPhone Safari and Android Chrome camera permission grant/denial/recovery, rear camera, actual 1D cards, low light, repeated frames, multiple phones and expired Google sign-in. Native BarcodeDetector is feature-detected; ZXing handles browsers without useful native 1D formats. Photos/video stay on the device, and tracks stop on scanner closure/page unmount.
+- iPhone Safari and Android Chrome mentor sign-in, event creation and adding participants by name.
 - A real local-midnight scenario (plus DST calendar tests): unfinished visit expires, completed earlier time remains, next scan starts a new visit with warning, delayed cleanup cannot clear it.
 - Production Google/OIDC audience/origin setup, direct API auth denial, kiosk revocation, SNS alarm delivery, cleanup failure queue and separately deployed Stats read-only integration.
 
-Automated Chromium desktop and narrow mobile viewport checks do not establish Safari, Android camera, scanner or operating-system acceptance.
+Automated Chromium desktop and narrow mobile viewport checks do not establish Safari, Android Chrome, scanner or operating-system acceptance.

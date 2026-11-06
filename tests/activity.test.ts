@@ -98,9 +98,17 @@ describe('transactional activity capture', () => {
       eventDate: '2026-05-31',
       hours: '0.5',
     });
-    await app.award(mentor, event.eventId, '000123');
-    await app.award(mentor, event.eventId, '000123');
+    await app.award(mentor, event.eventId, 'member-a');
+    await app.award(mentor, event.eventId, 'member-a');
     await app.removeAward(mentor, event.eventId, 'member-a', 'duplicate participation');
+    const competition = await app.saveEvent(mentor, {
+      title: 'Competition',
+      eventDate: '2026-05-31',
+      hours: '2',
+      eventType: 'COMPETITION',
+    });
+    await app.award(mentor, competition.eventId, 'member-a');
+    await app.removeAward(mentor, competition.eventId, 'member-a', 'wrong participant');
     expect(outboxes(db).map((r) => r.volunteerSeconds)).toEqual([1800, 0]);
   });
 });

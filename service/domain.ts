@@ -5,6 +5,7 @@ import {
   type Row,
   type Principal,
   roles,
+  eventTypes,
   staffsShop,
   key,
   row,
@@ -27,7 +28,7 @@ import {
 } from "./model";
 const shopClockKey = (day: string) => key("SHOP_CLOCK#" + day);
 
-function kioskDisplayName(email: unknown, storedName: unknown): string {
+function memberDisplayName(email: unknown, storedName: unknown): string {
   const schoolAddress =
     typeof email === "string"
       ? /^([^@.\s]+)\.([^@.\s]+)@stmarobotics\.org$/i.exec(email.trim())
@@ -122,15 +123,6 @@ export class Puncher {
     const claim = await tx.get(key("CARD#" + barcode(card)));
     assert(claim && !claim.retired, "Card is not assigned. Ask a mentor.", 404);
     return tx.get(key("USER#" + claim.memberId));
-  }
-  async memberForCard(tx: Tx, card: string) {
-    const m = await this.cardMember(tx, card);
-    assert(
-      m?.active && m.role === "STUDENT",
-      "This card is inactive or unavailable.",
-      403,
-    );
-    return m;
   }
   async expire(tx: Tx, current: Row, now: string): Promise<Row> {
     if (!current.sessionId || current.cutoffAt > now) return current;
@@ -689,6 +681,17 @@ export class Puncher {
       return { revoked: true };
     });
   }
+  async memberDirectory(p: Principal) {
+    mentor(p);
+    return (await all(this.store, "USERS", { index: "GSI1" }))
+      .filter((m) => m.active)
+      .map(({ memberId, displayName, email, role }) => ({
+        memberId,
+        displayName: memberDisplayName(email, displayName),
+        role,
+      }))
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
+  }
   async saveEvent(p: Principal, input: any, id = uid()) {
     mentor(p);
     const durationSeconds = hoursToSeconds(input.hours);
@@ -697,24 +700,31 @@ export class Puncher {
       "Event credit must be positive and at most 24 hours.",
     );
     const eventDate = validDate(input.eventDate);
+    const title = text(input.title, "Event title", 120);
     return atomic(this.store, async (tx) => {
       await this.livePrincipal(tx, p);
       const k = key(`EVENT#${id}`);
       const old = await tx.get(k);
+      const oldType = old?.eventType ?? "OUTREACH";
+      const eventType =
+        input.eventType === undefined ? oldType : input.eventType;
+      assert(eventTypes.includes(eventType), "Choose Outreach or Competition.");
       if (old) {
         owns(p, old);
         assert(
           !old.participantCount ||
             (old.durationSeconds === durationSeconds &&
               old.eventDate === eventDate &&
-              old.title === input.title),
-          "Title, date and hours are locked after attendance exists.",
+              old.title === title &&
+              oldType === eventType),
+          "Title, type, date and hours are locked after attendance exists.",
           409,
         );
       }
       const e = row(k.pk, k.sk, {
         eventId: id,
-        title: text(input.title, "Event title", 120),
+        title,
+        eventType,
         eventDate,
         reportingYear: reportingYear(eventDate),
         durationSeconds,
@@ -731,29 +741,37 @@ export class Puncher {
       return e;
     });
   }
-  async award(p: Principal, eventId: string, card: unknown) {
+  async award(p: Principal, eventId: string, member: unknown) {
     mentor(p);
+    const memberId = text(member, "Member", 200);
     return atomic(this.store, async (tx) => {
       await this.livePrincipal(tx, p);
       await this.rate(tx, p);
       const e = await tx.get(key(`EVENT#${eventId}`));
       assert(e, "Event not found.", 404);
       owns(p, e);
-      const m = await this.memberForCard(tx, barcode(card));
-      const claimKey = key(e.pk, `PARTICIPANT#${m.memberId}`);
+      const claimKey = key(e.pk, `PARTICIPANT#${memberId}`);
       const claim = await tx.get(claimKey);
       if (claim)
         return {
           state: "already",
-          displayName: m.displayName,
+          displayName: claim.displayName,
           creditedSeconds: claim.creditedSeconds,
         };
+      const m = await tx.get(key(`USER#${memberId}`));
+      assert(
+        m?.active && m.role === "STUDENT",
+        "Choose an active student.",
+        403,
+      );
+      const displayName = memberDisplayName(m.email, m.displayName);
+      const competition = e.eventType === "COMPETITION";
       const awardId = uid(),
         recordedAt = this.clock().toISOString(),
-        creditSk = `VOLUNTEER#${e.eventDate}#${awardId}`;
-      const c = row("ATTENDANCE#" + m.memberId, creditSk, {
+        creditSk = `${competition ? "COMPETITION" : "VOLUNTEER"}#${e.eventDate}#${awardId}`;
+      const c = row("ATTENDANCE#" + memberId, creditSk, {
         awardId,
-        memberId: m.memberId,
+        memberId,
         eventId,
         title: e.title,
         eventDate: e.eventDate,
@@ -767,8 +785,8 @@ export class Puncher {
       await tx.put(c);
       await tx.put(
         row(e.pk, claimKey.sk, {
-          memberId: m.memberId,
-          displayName: m.displayName,
+          memberId,
+          displayName,
           creditedSeconds: e.durationSeconds,
           creditSk,
           awardId,
@@ -776,13 +794,19 @@ export class Puncher {
         }),
       );
       await tx.put({ ...e, participantCount: e.participantCount + 1 });
-      await this.audit(tx, p, "volunteer.awarded", awardId, {
-        eventId,
-        memberId: m.memberId,
-      });
+      await this.audit(
+        tx,
+        p,
+        competition ? "competition.awarded" : "volunteer.awarded",
+        awardId,
+        {
+          eventId,
+          memberId,
+        },
+      );
       return {
         state: "logged",
-        displayName: m.displayName,
+        displayName,
         creditedSeconds: e.durationSeconds,
       };
     });
@@ -813,7 +837,10 @@ export class Puncher {
       });
       await tx.del(key(c.pk, c.sk));
       await tx.put({ ...e, participantCount: e.participantCount - 1 });
-      await this.audit(tx, p, "volunteer.voided", award.awardId, {
+      const action = award.sk.startsWith("COMPETITION#")
+        ? "competition.voided"
+        : "volunteer.voided";
+      await this.audit(tx, p, action, award.awardId, {
         reason,
         eventId,
       });
@@ -929,7 +956,7 @@ export class Puncher {
             return undefined;
           return {
             memberId: member.memberId,
-            displayName: kioskDisplayName(member.email, member.displayName),
+            displayName: memberDisplayName(member.email, member.displayName),
             cutoffAt: session.cutoffAt as string,
             isMentor: session.isMentor === true,
           };

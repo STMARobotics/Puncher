@@ -283,6 +283,12 @@
         "eventId": {
           "type": "string"
         },
+        "eventType": {
+          "enum": [
+            "OUTREACH",
+            "COMPETITION"
+          ]
+        },
         "title": {
           "type": "string"
         },
@@ -378,6 +384,78 @@
         }
       },
       "additionalProperties": true
+    },
+    "competition": {
+      "type": "object",
+      "required": [
+        "pk",
+        "sk",
+        "schemaVersion",
+        "awardId",
+        "memberId",
+        "title",
+        "status"
+      ],
+      "properties": {
+        "pk": {
+          "type": "string",
+          "pattern": "^ATTENDANCE#.+$"
+        },
+        "sk": {
+          "type": "string",
+          "pattern": "^COMPETITION#.+#.+$"
+        },
+        "schemaVersion": {
+          "const": 2
+        },
+        "awardId": {
+          "type": "string"
+        },
+        "memberId": {
+          "type": "string"
+        },
+        "eventId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "eventDate": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "reportingYear": {
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "approved",
+            "pending_review",
+            "quarantined",
+            "voided"
+          ]
+        },
+        "creditedSeconds": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "recordedBy": {
+          "type": "string"
+        },
+        "recordedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T.*Z$"
+        },
+        "eventVersion": {
+          "type": "integer"
+        },
+        "provenance": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
     }
   },
   "oneOf": [
@@ -398,6 +476,9 @@
     },
     {
       "$ref": "#/definitions/volunteer"
+    },
+    {
+      "$ref": "#/definitions/competition"
     }
   ]
 }
