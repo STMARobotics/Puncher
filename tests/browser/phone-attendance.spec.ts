@@ -43,6 +43,16 @@ test("a mentor phone activates an anonymous kiosk and a member phone clocks atte
     viewport: { width: 390, height: 844 },
   });
   try {
+    await member.route("**/config.json", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          googleClientId: "",
+          localFixtures: true,
+          walletEnabled: true,
+        }),
+      }),
+    );
     await kiosk.goto("/");
     await kiosk.getByRole("link", { name: "Start kiosk" }).click();
     await expect(
@@ -84,6 +94,9 @@ test("a mentor phone activates an anonymous kiosk and a member phone clocks atte
 
     await member.goto("/");
     await member.getByRole("button", { name: "Local student" }).click();
+    await expect(
+      member.getByRole("link", { name: "Add to Google Wallet" }),
+    ).toHaveAttribute("href", "/api/wallet/save");
     const code = await readCode(
       member.getByRole("img", { name: "Your attendance barcode" }),
       BarcodeFormat.CODE_128,

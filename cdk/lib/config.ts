@@ -4,6 +4,7 @@ export interface Config {
   zoneName: string;
   zoneId: string;
   googleClientId: string;
+  googleWalletClassId: string;
   statsUrl: string;
   repository: string;
   tableName: string;
@@ -16,6 +17,7 @@ export const config: Config = {
   zoneId: "Z014656337LGZWAE9JKJP",
   googleClientId:
     "574028865613-h0k3s1dn8k1vkjpq7gv4ht7laivj0h38.apps.googleusercontent.com",
+  googleWalletClassId: "BCR2DN6D6CVPJD2U.attendance",
   statsUrl: "https://stats.7028robotics.com",
   repository: "STMARobotics@32277731/Puncher@1443278208",
   tableName: "puncher-prod-records",

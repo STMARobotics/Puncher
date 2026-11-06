@@ -40,6 +40,9 @@ export function runtime() {
     googleClientId: process.env.GOOGLE_CLIENT_ID || "",
     googleClientSecretParameter:
       process.env.GOOGLE_CLIENT_SECRET_PARAMETER || "",
+    googleWalletClassId: process.env.GOOGLE_WALLET_CLASS_ID || "",
+    googleWalletServiceAccountParameter:
+      process.env.GOOGLE_WALLET_SERVICE_ACCOUNT_PARAMETER || "",
     statsUrl: process.env.STATS_URL || "https://stats.7028robotics.com",
   };
 }
@@ -56,5 +59,9 @@ export function publicConfig() {
     timezone: "America/Chicago",
     statsUrl: c.statsUrl,
     localFixtures: c.fixtures,
+    walletEnabled:
+      !!c.googleWalletClassId &&
+      (!!c.googleWalletServiceAccountParameter ||
+        (c.local && !!process.env.GOOGLE_WALLET_SERVICE_ACCOUNT_JSON)),
   };
 }

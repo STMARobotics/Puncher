@@ -13,6 +13,7 @@ import {
   applyRosterBatch,
 } from "./roster-import";
 import { store, runtime, publicConfig } from "./runtime";
+import { walletSaveUrl } from "./wallet";
 import { all, atomic, type Store } from "./store";
 import {
   Fault,
@@ -196,6 +197,23 @@ export async function dispatch(req: Request, db: Store = store()) {
       throw new Fault(404, "Route not found.");
     }
     const p = await human(headers, db);
+    if (method === "GET" && path === "/api/wallet/save") {
+      assert(p.memberId, "A linked attendance account is required.", 403);
+      const member = await db.get(key("MEMBER#" + p.memberId));
+      assert(
+        member?.active &&
+          member.memberKind === "student" &&
+          /^[0-9]{6}$/.test(member.barcode),
+        "Your attendance barcode is unavailable.",
+        403,
+      );
+      const location = await walletSaveUrl(p.memberId, member.barcode);
+      return response(
+        200,
+        { url: location },
+        { "referrer-policy": "no-referrer" },
+      );
+    }
     if (path === "/api/me" && method === "GET") {
       const student = p.roles.length === 1 && p.roles[0] === "student";
       const member = p.memberId

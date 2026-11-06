@@ -114,6 +114,9 @@ export class BackendStack extends cdk.Stack {
     const staff = create("Staff", "service/api.ts", "handler", {
       API_SCOPE: "staff",
       GOOGLE_CLIENT_SECRET_PARAMETER: "/puncher/google-client-secret",
+      GOOGLE_WALLET_CLASS_ID: c.googleWalletClassId,
+      GOOGLE_WALLET_SERVICE_ACCOUNT_PARAMETER:
+        "/puncher/google-wallet-service-account",
     });
     const kiosk = create("Kiosk", "service/api.ts", "handler", {
       API_SCOPE: "kiosk",
@@ -250,6 +253,26 @@ export class BackendStack extends cdk.Stack {
         },
       }),
     );
+    staff.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["ssm:GetParameter"],
+        resources: [
+          `arn:${cdk.Aws.PARTITION}:ssm:${this.region}:${this.account}:parameter/puncher/google-wallet-service-account`,
+        ],
+      }),
+    );
+    staff.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["kms:Decrypt"],
+        resources: ["*"],
+        conditions: {
+          StringEquals: {
+            "kms:ViaService": `ssm.${this.region}.amazonaws.com`,
+            "kms:EncryptionContext:PARAMETER_ARN": `arn:${cdk.Aws.PARTITION}:ssm:${this.region}:${this.account}:parameter/puncher/google-wallet-service-account`,
+          },
+        },
+      }),
+    );
     permission(
       kiosk,
       ["GetItem", "Query", "PutItem", "DeleteItem", "ConditionCheckItem"],
@@ -323,11 +346,13 @@ export class BackendStack extends cdk.Stack {
       ["/api/auth/login", http.HttpMethod.GET],
       ["/api/auth/callback", http.HttpMethod.GET],
       ["/api/auth/logout", http.HttpMethod.POST],
+      ["/api/wallet/save", http.HttpMethod.GET],
     ] as const)
       this.api.addRoutes({
         path,
         methods: [method],
         integration: staffIntegration,
+        ...(path === "/api/wallet/save" ? { authorizer: humanAuth } : {}),
       });
     this.api.addRoutes({
       path: "/api/health",

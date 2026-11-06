@@ -22,6 +22,7 @@ const ActivationPass = React.lazy(() =>
 type Config = {
   googleClientId: string;
   localFixtures: boolean;
+  walletEnabled: boolean;
 };
 type Person = { id: string; roles: string[]; barcode?: string };
 function App() {
@@ -126,6 +127,14 @@ function App() {
       setGenerating(false);
     }
   }
+  async function addToWallet() {
+    try {
+      const pass = await api("/wallet/save");
+      window.location.assign(pass.url);
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
   const mentorActions = (
     <>
       <button onClick={() => navigate("members")}>Manage members</button>
@@ -217,6 +226,21 @@ function App() {
                 />
               </React.Suspense>
             )}
+            {person.barcode && config.walletEnabled && (
+              <p>
+                <a
+                  className="google-login"
+                  href="/api/wallet/save"
+                  referrerPolicy="no-referrer"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    void addToWallet();
+                  }}
+                >
+                  Add to Google Wallet
+                </a>
+              </p>
+            )}
             <p>Scan at the kiosk to clock in or out.</p>
           </section>
         ) : page === "members" ? (
@@ -245,6 +269,21 @@ function App() {
                     label="Your attendance barcode"
                   />
                 </React.Suspense>
+                {config.walletEnabled && (
+                  <p>
+                    <a
+                      className="google-login"
+                      href="/api/wallet/save"
+                      referrerPolicy="no-referrer"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        void addToWallet();
+                      }}
+                    >
+                      Add to Google Wallet
+                    </a>
+                  </p>
+                )}
                 <p>Scan this barcode at the kiosk to check out.</p>
               </details>
             )}
