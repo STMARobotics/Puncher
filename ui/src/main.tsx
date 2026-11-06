@@ -228,7 +228,7 @@ function App() {
                 />
               </React.Suspense>
             )}
-            {person.barcode && config.walletEnabled && (
+            {person.barcode && config.walletEnabled && isAdmin && (
               <p>
                 <a
                   className="google-login"
