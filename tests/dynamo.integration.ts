@@ -183,7 +183,7 @@ test("activity outbox commits once with checkout and voided volunteer credit on 
     eventDate: "2026-05-31",
     hours: "0.5",
   });
-  await app.award(mentor, event.eventId, "000123");
+  await app.award(mentor, event.eventId, "member-a");
   await app.removeAward(
     mentor,
     event.eventId,
@@ -276,7 +276,7 @@ test("real conditional card claim and event uniqueness across competing writers"
     hours: "2.1",
   });
   const awards = await Promise.all(
-    Array.from({ length: 5 }, () => app.award(mentor, e.eventId, "000123")),
+    Array.from({ length: 5 }, () => app.award(mentor, e.eventId, "member-a")),
   );
   assert.equal(awards.filter((r) => r.state === "logged").length, 1);
   assert.equal(

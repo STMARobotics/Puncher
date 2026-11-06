@@ -209,6 +209,8 @@ export async function dispatch(req: Request, db: Store = store()) {
     if (path === "/api/me" && method === "GET")
       return response(200, { id: p.id, role: p.role, barcode: p.barcode });
     mentor(p);
+    if (path === "/api/mentor/members" && method === "GET")
+      return response(200, await app.memberDirectory(p));
     if (path === "/api/mentor/kiosk/activation" && method === "POST")
       return response(201, await app.issueKioskActivation(p));
     if (path === "/api/mentor/kiosks" && method === "GET")
@@ -243,6 +245,7 @@ export async function dispatch(req: Request, db: Store = store()) {
               eventId,
               title,
               eventDate,
+              eventType,
               durationSeconds,
               notes,
               participantCount,
@@ -251,6 +254,7 @@ export async function dispatch(req: Request, db: Store = store()) {
               eventId,
               title,
               eventDate,
+              eventType: eventType ?? "OUTREACH",
               durationSeconds,
               notes,
               participantCount,
@@ -262,15 +266,15 @@ export async function dispatch(req: Request, db: Store = store()) {
     if (path === "/api/events" && method === "POST")
       return response(201, await app.saveEvent(p, b));
     const event = path.match(
-      /^\/api\/events\/([^/]+)(?:\/(participants|scan))?(?:\/([^/]+))?$/,
+      /^\/api\/events\/([^/]+)(?:\/(participants)(?:\/([^/]+))?)?$/,
     );
     if (event) {
       const id = event[1];
       if (!event[2] && method === "PATCH")
         return response(200, await app.saveEvent(p, b, id));
-      if (event[2] === "scan" && method === "POST")
-        return response(200, await app.award(p, id, b.barcode));
       if (event[2] === "participants") {
+        if (!event[3] && method === "POST")
+          return response(200, await app.award(p, id, b.memberId));
         const e = await db.get(key(`EVENT#${id}`));
         assert(e, "Event not found.", 404);
         owns(p, e);
@@ -279,7 +283,7 @@ export async function dispatch(req: Request, db: Store = store()) {
             200,
             await app.removeAward(p, id, event[3], b.reason),
           );
-        if (method === "GET")
+        if (!event[3] && method === "GET")
           return response(
             200,
             (await all(db, e.pk, { prefix: "PARTICIPANT#" })).map(

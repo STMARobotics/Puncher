@@ -5,16 +5,20 @@ Sign in with a verified stmarobotics.org Google account. On first sign-in Punche
 | Role | Access |
 | --- | --- |
 | Student | View their barcode, clock in and out, and appear in the Students kiosk column. |
-| Mentor | View their barcode, appear in the Mentors kiosk column, create volunteer events and generate kiosk activation QR codes. |
+| Mentor | View their barcode and the active member directory, appear in the Mentors kiosk column, create outreach and competition events, and generate kiosk activation QR codes. |
 | Admin | Mentor capabilities plus member, role, card, and audit administration. Admins also appear in the Mentors column. |
 
 When the last Mentor or Admin clocks out, the shop switches to checkout-only mode. A Mentor or Admin can reopen it with a kiosk activation QR.
 
 In **Manage members**, an Admin selects **Edit member** and chooses one role. The person must sign in first to appear in the roster. A member must clock out before an Admin can change their role or active status. An Admin can also replace a card or export active member details for external ID-card printing.
 
+## Event attendance
+
+Choose **CREATE EVENT** and select **Outreach** or **Competition**. After saving, search for active students by name and select **Add** beside each participant. The event awards the specified hours to each participant. Earlier volunteer events appear as Outreach. Competition credit is recorded separately from the outreach hours sent to Stats.
+
 ## Kiosk launch and recovery
 
-Select **Start kiosk** on the shared device. On their phone, a mentor signs in and selects **Generate kiosk activation QR**. The kiosk accepts the code once within two minutes and records the mentor and server start time. Activation creates a scoped kiosk session and clears any human session in that browser. The mentor phone stays signed in. Scan a new mentor QR into the same scanner to reopen the shop.
+Select **Start kiosk** on the shared device. On their phone, a mentor signs in and selects **GENERATE KIOSK**. The kiosk accepts the code once within two minutes and records the mentor and server start time. Activation creates a scoped kiosk session and clears any human session in that browser. The mentor phone stays signed in. Scan a new mentor QR into the same scanner to reopen the shop.
 
 Every signed-in member can display their six-digit attendance code as a Code 128 barcode. The phone and printed barcode identify the same attendance account. Tap the barcode to copy its code.
 

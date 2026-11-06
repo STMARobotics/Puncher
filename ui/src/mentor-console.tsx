@@ -15,6 +15,7 @@ type Member = {
   active: boolean;
   version: number;
 };
+export type DirectoryMember = Pick<Member, "memberId" | "displayName" | "role">;
 
 export function rosterCsv(members: any[]) {
   const cell = (value: unknown, protectFormula = true) => {
@@ -44,18 +45,17 @@ function downloadRoster(members: any[]) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 export function MentorConsole({ administrator }: { administrator: boolean }) {
-  const [tab, setTab] = useState(administrator ? "members" : "kiosks");
+  const [tab, setTab] = useState("members");
   return (
     <>
       <div className="page-heading">
-        <h1>{administrator ? "MANAGE MEMBERS" : "KIOSK SESSIONS"}</h1>
+        <h1>MANAGE MEMBERS</h1>
       </div>
       <nav className="tabs" aria-label="Mentor tools">
-        {[
-          ...(administrator
-            ? ["members", "kiosks", "import review", "audit"]
-            : ["kiosks"]),
-        ].map((t) => (
+        {(administrator
+          ? ["members", "kiosks", "import review", "audit"]
+          : ["members", "kiosks"]
+        ).map((t) => (
           <button
             key={t}
             className={tab === t ? "selected" : ""}
@@ -65,14 +65,57 @@ export function MentorConsole({ administrator }: { administrator: boolean }) {
           </button>
         ))}
       </nav>
-      {administrator && tab === "members" ? (
-        <Members />
+      {tab === "members" ? (
+        administrator ? (
+          <Members />
+        ) : (
+          <MemberDirectory />
+        )
       ) : tab === "kiosks" ? (
         <KioskSessions />
       ) : (
         <Operations tab={tab === "audit" ? "audit" : "review"} />
       )}
     </>
+  );
+}
+function MemberDirectory() {
+  const [members, setMembers] = useState<DirectoryMember[]>();
+  const [error, setError] = useState("");
+  useEffect(() => {
+    api("/mentor/members")
+      .then(setMembers)
+      .catch((e) => setError(e.message));
+  }, []);
+  return (
+    <section className="panel" aria-label="Active members">
+      {error ? (
+        <p role="alert" className="notice error">
+          {error}
+        </p>
+      ) : !members ? (
+        <p>Loading members…</p>
+      ) : members.length === 0 ? (
+        <p>No active members.</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Role</th>
+            </tr>
+          </thead>
+          <tbody>
+            {members.map((m) => (
+              <tr key={m.memberId}>
+                <td>{m.displayName}</td>
+                <td>{roleLabels[m.role]}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
   );
 }
 function Members() {

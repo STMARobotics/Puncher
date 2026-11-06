@@ -25,7 +25,9 @@ it("language-neutral fixtures validate and have the specified eligible totals", 
 });
 it("actual writer sessions and awards satisfy the reader schema", async () => {
   const { app, db, advance } = await fixture();
-  expect(validate(await db.get({ pk: "USER#member-a", sk: "METADATA" }))).toBe(true);
+  expect(validate(await db.get({ pk: "USER#member-a", sk: "METADATA" }))).toBe(
+    true,
+  );
   await app.scan(device, "000123", uid());
   advance(60);
   await app.scan(device, "000123", uid());
@@ -34,7 +36,21 @@ it("actual writer sessions and awards satisfy the reader schema", async () => {
     eventDate: "2026-06-02",
     hours: "1",
   });
-  await app.award(mentor, e.eventId, "000123");
+  await app.award(mentor, e.eventId, "member-a");
+  const competition = await app.saveEvent(mentor, {
+    title: "Synthetic competition",
+    eventDate: "2026-06-02",
+    hours: "2",
+    eventType: "COMPETITION",
+  });
+  await expect(
+    app.award(mentor, competition.eventId, mentor.id),
+  ).rejects.toThrow("Choose an active student");
+  await app.award(mentor, competition.eventId, "member-a");
+  expect(validate(competition)).toBe(true);
+  expect(
+    await all(db, "ATTENDANCE#member-a", { prefix: "COMPETITION#" }),
+  ).toMatchObject([{ status: "approved", creditedSeconds: 7200 }]);
   for (const r of (await all(db, "ATTENDANCE#member-a")).filter(
     (r) => r.sk !== "CURRENT",
   ))

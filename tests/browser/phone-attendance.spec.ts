@@ -63,7 +63,7 @@ test("a mentor phone activates an anonymous kiosk and a member phone clocks atte
       .getByRole("button", { name: "Local mentor", exact: true })
       .click();
     await mentor
-      .getByRole("button", { name: "Generate kiosk activation QR" })
+      .getByRole("button", { name: "GENERATE KIOSK" })
       .first()
       .click();
     const qr = await readCode(
@@ -180,7 +180,7 @@ test("a mentor phone activates an anonymous kiosk and a member phone clocks atte
     ).toBe(scannerHeight);
 
     await mentor
-      .getByRole("button", { name: "Generate kiosk activation QR" })
+      .getByRole("button", { name: "GENERATE KIOSK" })
       .first()
       .click();
     const reopen = await readCode(

@@ -16,35 +16,22 @@ async function launchKiosk(page: import("@playwright/test").Page) {
   await page.keyboard.press("Enter");
   await expect(page.getByLabel("Student ID scanner input")).toBeFocused();
 }
-test("camera permission denial has a recovery message without awarding hours", async ({
+test("mentor navigation opens the read-only member directory", async ({
   page,
 }) => {
-  await page.addInitScript(() => {
-    Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
-      value: async () => {
-        throw new DOMException("Denied", "NotAllowedError");
-      },
-    });
-    Object.defineProperty(window, "BarcodeDetector", { value: undefined });
-  });
   await page.goto("/");
   await page.getByRole("button", { name: "Local mentor", exact: true }).click();
-  await page
-    .getByRole("main")
-    .getByRole("button", { name: "Create a volunteer event" })
-    .click();
-  const title = `Camera check ${Date.now()}`;
-  await page.getByLabel("Event title").fill(title);
-  await page.getByLabel("Local event date").fill("2026-06-01");
-  await page.getByLabel("Hours per participant").fill("1");
-  await page.getByRole("button", { name: "Create event", exact: true }).click();
-  await page.getByRole("button").filter({ hasText: title }).click();
-  await page.getByRole("button", { name: "Open camera scanner" }).click();
-  await page.getByRole("button", { name: "Start rear camera" }).click();
-  await expect(page.getByRole("alert")).toContainText(
-    "Camera permission was denied",
+  const navigation = page.getByRole("navigation", { name: "Main navigation" });
+  await expect(navigation.getByRole("button")).toHaveText([
+    "MANAGE MEMBERS",
+    "CREATE EVENT",
+    "GENERATE KIOSK",
+  ]);
+  await navigation.getByRole("button", { name: "MANAGE MEMBERS" }).click();
+  await expect(page.getByRole("cell", { name: "Alex Example" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Edit member" })).toHaveCount(
+    0,
   );
-  await expect(page.locator(".list-row")).toHaveCount(0);
 });
 test("kiosk accepts Enter/CRLF, saved result, no card exposure, stale reset protection", async ({
   page,
@@ -110,24 +97,41 @@ test("mentor creates an event, adds once, removes with a reason; phone layout wo
   await page.getByRole("button", { name: "Local mentor", exact: true }).click();
   await page
     .getByRole("main")
-    .getByRole("button", { name: "Create a volunteer event" })
+    .getByRole("button", { name: "CREATE EVENT", exact: true })
     .click();
-  const title = `Synthetic outreach ${Date.now()}`;
+  await expect(
+    page.getByRole("heading", { name: "Create Event", exact: true }),
+  ).toBeVisible();
+  const title = `Synthetic competition ${Date.now()}`;
   await page.getByLabel("Event title").fill(title);
+  await expect(page.getByLabel("Event type")).toHaveValue("OUTREACH");
+  await page.getByLabel("Event type").selectOption("COMPETITION");
   await page.getByLabel("Local event date").fill("2026-06-01");
   await page.getByLabel("Hours per participant").fill("1.5");
   await page.getByRole("button", { name: "Create event", exact: true }).click();
-  await page.getByRole("button").filter({ hasText: title }).click();
-  await page.getByLabel("Volunteer student card").fill("000123");
-  await page.getByRole("button", { name: "Log card" }).click();
-  await expect(page.getByRole("status")).toContainText("1h 30m awarded");
-  await page.getByLabel("Volunteer student card").fill("000123");
-  await page.getByRole("button", { name: "Log card" }).click();
-  await expect(page.getByRole("status")).toContainText("Already logged");
+  await expect(page.getByRole("heading", { name: title })).toBeVisible();
+  await page.getByRole("searchbox", { name: "Search students" }).fill("alex");
+  await expect(
+    page.getByRole("button", { name: "Add Jordan Sample" }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Add Alex Example" }).click();
+  await expect(page.getByRole("status")).toContainText("1h 30m credited");
+  await expect(
+    page.getByRole("button", { name: "Add Alex Example" }),
+  ).toHaveCount(0);
   await page.screenshot({ path: "work/mentor-mobile.png", fullPage: true });
-  page.once("dialog", (dialog) => dialog.accept("Synthetic test wrong scan"));
+  page.once("dialog", (dialog) =>
+    dialog.accept("Synthetic test wrong student"),
+  );
   await page.getByRole("button", { name: "Remove", exact: true }).click();
-  await expect(page.locator(".list-row")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Add Alex Example" }),
+  ).toBeVisible();
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("button", { name: "CREATE EVENT", exact: true })
+    .click();
+  await expect(page.getByLabel("Event title")).toBeEmpty();
 });
 test("admins can view their own barcode and manage the single role of an existing member", async ({
   page,
@@ -147,30 +151,35 @@ test("admins can view their own barcode and manage the single role of an existin
     page
       .getByRole("navigation", { name: "Main navigation" })
       .getByRole("button"),
-  ).toHaveText([
-    "Manage members",
-    "Create a volunteer event",
-    "Generate kiosk activation QR",
-  ]);
+  ).toHaveText(["MANAGE MEMBERS", "CREATE EVENT", "GENERATE KIOSK"]);
   await expect(
     page.getByRole("img", { name: "Your attendance barcode" }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: "Manage members", exact: true })
+    .getByRole("button", { name: "MANAGE MEMBERS", exact: true })
     .first()
     .click();
   const member = page.getByRole("row").filter({ hasText: "Alex Example" });
   await expect(member).toBeVisible();
-  await member.getByRole("button", { name: "Edit member", exact: true }).click();
+  await member
+    .getByRole("button", { name: "Edit member", exact: true })
+    .click();
   await expect(page.getByText("000123", { exact: true }).first()).toBeVisible();
   const rolePicker = page.getByRole("combobox", { name: "Role", exact: true });
   await expect(rolePicker).toHaveValue("STUDENT");
   const preview = page.getByRole("row").filter({ hasText: "Casey Preview" });
-  for (const [role, label] of [["ADMIN", "Admin"], ["STUDENT", "Student"]]) {
-    await preview.getByRole("button", { name: "Edit member", exact: true }).click();
+  for (const [role, label] of [
+    ["ADMIN", "Admin"],
+    ["STUDENT", "Student"],
+  ]) {
+    await preview
+      .getByRole("button", { name: "Edit member", exact: true })
+      .click();
     await rolePicker.selectOption(role);
     await page.getByRole("button", { name: "Save member" }).click();
-    await expect(preview.getByRole("cell", { name: label, exact: true })).toBeVisible();
+    await expect(
+      preview.getByRole("cell", { name: label, exact: true }),
+    ).toBeVisible();
   }
   await expect(page.getByRole("button", { name: /print/i })).toHaveCount(0);
   await expect(page.getByLabel("Device credential")).toHaveCount(0);

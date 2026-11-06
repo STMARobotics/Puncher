@@ -7,15 +7,12 @@ import "@fontsource/figtree/700.css";
 import "@fontsource/figtree/800.css";
 import "./style.css";
 import { api, setToken, duration, time } from "./api";
-import { MentorConsole } from "./mentor-console";
+import { MentorConsole, type DirectoryMember } from "./mentor-console";
 import { ScanBuffer } from "./scanner";
 import { ScanEffects } from "./scan-effects";
 import { PuncherMark } from "./puncher-mark";
 import { activateKioskSession, KioskActivation } from "./kiosk-activation";
-import type { Role } from "../../service/model";
-const Camera = React.lazy(() =>
-  import("./camera").then((module) => ({ default: module.Camera })),
-);
+import type { EventType, Role } from "../../service/model";
 const PassCode = React.lazy(() => import("./pass-code"));
 const ActivationPass = React.lazy(() =>
   import("./pass-code").then((module) => ({ default: module.ActivationPass })),
@@ -32,6 +29,7 @@ function App() {
       location.pathname === "/kiosk" ? "kiosk" : "home",
     ),
     [person, setPerson] = useState<Person>(),
+    [eventView, setEventView] = useState(0),
     [error, setError] = useState(""),
     [generating, setGenerating] = useState(false),
     [activation, setActivation] = useState<{
@@ -137,14 +135,17 @@ function App() {
   }
   const mentorActions = (
     <>
-      <button onClick={() => navigate("members")}>
-        {isAdmin ? "Manage members" : "Kiosk sessions"}
-      </button>
-      <button onClick={() => navigate("new-event")}>
-        Create a volunteer event
+      <button onClick={() => navigate("members")}>MANAGE MEMBERS</button>
+      <button
+        onClick={() => {
+          setEventView((view) => view + 1);
+          navigate("events");
+        }}
+      >
+        CREATE EVENT
       </button>
       <button disabled={generating} onClick={generateActivation}>
-        {generating ? "Generating…" : "Generate kiosk activation QR"}
+        {generating ? "Generating…" : "GENERATE KIOSK"}
       </button>
     </>
   );
@@ -257,15 +258,12 @@ function App() {
           </section>
         ) : page === "members" ? (
           <MentorConsole administrator={isAdmin} />
-        ) : page === "events" || page === "new-event" ? (
-          <Events key={page} startCreating={page === "new-event"} />
+        ) : page === "events" ? (
+          <Events key={eventView} />
         ) : (
           <section className="panel mentor-dashboard">
             <h1>MENTOR DASHBOARD</h1>
-            <p>
-              {isAdmin ? "Manage members, organize" : "Organize"} volunteer
-              events, or activate the shop kiosk.
-            </p>
+            <p>View members, organize events, or activate the shop kiosk.</p>
             <div className="mentor-actions">{mentorActions}</div>
             {activation && (
               <React.Suspense fallback={<p>Loading QR code…</p>}>
@@ -977,93 +975,77 @@ function ShopTotals() {
     </section>
   );
 }
-function Events({ startCreating = false }: { startCreating?: boolean }) {
-  const [events, setEvents] = useState<any[]>([]),
-    [selected, setSelected] = useState<any>(),
-    [participants, setParticipants] = useState<any[]>([]),
+type EventSummary = {
+  eventId: string;
+  title: string;
+  eventDate: string;
+  eventType: EventType;
+  durationSeconds: number;
+  notes: string;
+  participantCount: number;
+};
+type EventParticipant = Pick<DirectoryMember, "memberId" | "displayName"> & {
+  creditedSeconds: number;
+};
+const eventLabels: Record<EventType, string> = {
+  OUTREACH: "Outreach",
+  COMPETITION: "Competition",
+};
+
+function Events() {
+  const [events, setEvents] = useState<EventSummary[]>([]),
+    [selectedId, setSelectedId] = useState<string>(),
     [error, setError] = useState(""),
-    [message, setMessage] = useState(""),
-    [form, setForm] = useState(startCreating),
-    [editing, setEditing] = useState<any>(),
-    [camera, setCamera] = useState(false);
-  const inflight = useRef(new Set<string>());
-  const load = () =>
+    [form, setForm] = useState(true),
+    [editing, setEditing] = useState<EventSummary>(),
+    [loading, setLoading] = useState(true),
+    [saving, setSaving] = useState(false);
+  const selected = events.find((event) => event.eventId === selectedId);
+  useEffect(() => {
     api("/events")
       .then(setEvents)
-      .catch((e) => setError(e.message));
-  useEffect(() => {
-    load();
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
   }, []);
-  const roster = (id: string) =>
-    api(`/events/${id}/participants`)
-      .then(setParticipants)
-      .catch((e) => setError(e.message));
   async function create(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(e.currentTarget));
+    setSaving(true);
+    setError("");
     try {
-      const saved = await api(
+      const saved: EventSummary = await api(
         editing ? `/events/${editing.eventId}` : "/events",
         data,
         editing ? "PATCH" : "POST",
       );
-      if (editing) setSelected(saved);
+      setEvents((current) =>
+        editing
+          ? current.map((event) =>
+              event.eventId === saved.eventId ? saved : event,
+            )
+          : [saved, ...current],
+      );
+      setSelectedId(saved.eventId);
       setForm(false);
       setEditing(undefined);
-      load();
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }
-  async function scan(card: string) {
-    if (!selected || inflight.current.has(card)) return;
-    inflight.current.add(card);
-    try {
-      const r = await api(`/events/${selected.eventId}/scan`, {
-        barcode: card,
-      });
-      setMessage(
-        `${r.displayName} · ${r.state === "already" ? "Already logged" : `${duration(r.creditedSeconds)} awarded`}`,
-      );
-      setError("");
-      roster(selected.eventId);
-      load();
     } catch (e: any) {
       setError(e.message);
     } finally {
-      inflight.current.delete(card);
-    }
-  }
-  async function remove(m: any) {
-    const reason = prompt(
-      `Remove ${m.displayName} from this event? Enter the correction reason.`,
-    );
-    if (!reason) return;
-    try {
-      await api(
-        `/events/${selected.eventId}/participants/${m.memberId}`,
-        { reason },
-        "DELETE",
-      );
-      roster(selected.eventId);
-      load();
-    } catch (e: any) {
-      setError(e.message);
+      setSaving(false);
     }
   }
   return (
     <>
       <div className="page-heading">
-        <div>
-          <h1>VOLUNTEER EVENTS</h1>
-        </div>
+        <h1 className="event-heading">Create Event</h1>
         <button
+          disabled={saving}
           onClick={() => {
             setEditing(undefined);
             setForm(!form);
           }}
         >
-          + New event
+          {form ? "Cancel" : "+ New event"}
         </button>
       </div>
       {error && (
@@ -1073,7 +1055,7 @@ function Events({ startCreating = false }: { startCreating?: boolean }) {
       )}
       {form && (
         <section className="panel">
-          <h2>{editing ? "EDIT EVENT" : "CREATE AN EVENT"}</h2>
+          {editing && <h2>Edit Event</h2>}
           <form
             key={editing?.eventId || "new"}
             onSubmit={create}
@@ -1088,6 +1070,16 @@ function Events({ startCreating = false }: { startCreating?: boolean }) {
                 placeholder="Community open house"
                 defaultValue={editing?.title}
               />
+            </label>
+            <label>
+              Event type
+              <select
+                name="eventType"
+                defaultValue={editing?.eventType ?? "OUTREACH"}
+              >
+                <option value="OUTREACH">Outreach</option>
+                <option value="COMPETITION">Competition</option>
+              </select>
             </label>
             <label>
               Local event date
@@ -1118,7 +1110,9 @@ function Events({ startCreating = false }: { startCreating?: boolean }) {
                 defaultValue={editing?.notes}
               />
             </label>
-            <button>{editing ? "Save event" : "Create event"}</button>
+            <button disabled={loading || saving}>
+              {saving ? "Saving…" : editing ? "Save event" : "Create event"}
+            </button>
           </form>
         </section>
       )}
@@ -1127,7 +1121,9 @@ function Events({ startCreating = false }: { startCreating?: boolean }) {
           <div className="section-label">
             EVENTS <span>{events.length}</span>
           </div>
-          {events.length === 0 ? (
+          {loading ? (
+            <p className="muted">Loading events…</p>
+          ) : events.length === 0 ? (
             <div className="panel empty">
               <p>No events yet.</p>
             </div>
@@ -1136,19 +1132,15 @@ function Events({ startCreating = false }: { startCreating?: boolean }) {
               <button
                 className={`event-card ${selected?.eventId === e.eventId ? "chosen" : ""}`}
                 key={e.eventId}
-                onClick={() => {
-                  setSelected(e);
-                  setCamera(false);
-                  setMessage("");
-                  roster(e.eventId);
-                }}
+                onClick={() => setSelectedId(e.eventId)}
               >
                 <span className="event-date">{e.eventDate}</span>
                 <strong>{e.title}</strong>
                 <span>
-                  {duration(e.durationSeconds)} per student{" "}
-                  <span className="footer-dot">·</span> {e.participantCount}{" "}
-                  participants
+                  {eventLabels[e.eventType]} · {duration(e.durationSeconds)} per
+                  student <span className="footer-dot">·</span>{" "}
+                  {e.participantCount}{" "}
+                  {e.participantCount === 1 ? "participant" : "participants"}
                 </span>
                 <span className="card-arrow">↗</span>
               </button>
@@ -1163,7 +1155,8 @@ function Events({ startCreating = false }: { startCreating?: boolean }) {
           ) : (
             <>
               <p className="eyebrow">
-                {selected.eventDate} / {duration(selected.durationSeconds)} EACH
+                {eventLabels[selected.eventType]} / {selected.eventDate} /{" "}
+                {duration(selected.durationSeconds)} each
               </p>
               <h2 className="natural-title">{selected.title}</h2>
               <p className="muted">{selected.notes}</p>
@@ -1176,59 +1169,172 @@ function Events({ startCreating = false }: { startCreating?: boolean }) {
               >
                 Edit event
               </button>
-              <button onClick={() => setCamera(!camera)}>
-                {camera ? "Close scanner" : "Open camera scanner"}
-              </button>
-              {camera && (
-                <React.Suspense fallback={<p>Loading camera scanner…</p>}>
-                  <Camera key={selected.eventId} onCard={scan} />
-                </React.Suspense>
-              )}
-              <form
-                className="inline-form"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const f = e.currentTarget;
-                  const card = new FormData(f).get("barcode") as string;
-                  scan(card);
-                  f.reset();
-                }}
-              >
-                <label>
-                  USB scanner / manual fallback
-                  <input
-                    name="barcode"
-                    pattern="[0-9]{6}"
-                    maxLength={6}
-                    inputMode="numeric"
-                    autoComplete="off"
-                    required
-                    aria-label="Volunteer student card"
-                  />
-                </label>
-                <button>Log card</button>
-              </form>
-              <p role="status" className="success">
-                {message}
-              </p>
-              <div className="section-label">
-                PARTICIPANTS <span>{participants.length}</span>
-              </div>
-              {participants.map((m) => (
-                <div className="list-row" key={m.memberId}>
-                  <span>
-                    {m.displayName}
-                    <small>{duration(m.creditedSeconds)} credited</small>
-                  </span>
-                  <button className="quiet danger" onClick={() => remove(m)}>
-                    Remove
-                  </button>
-                </div>
-              ))}
+              <EventAttendance
+                key={selected.eventId}
+                eventId={selected.eventId}
+                onChange={(count) =>
+                  setEvents((current) =>
+                    current.map((event) =>
+                      event.eventId === selected.eventId
+                        ? { ...event, participantCount: count }
+                        : event,
+                    ),
+                  )
+                }
+              />
             </>
           )}
         </section>
       </div>
+    </>
+  );
+}
+function EventAttendance({
+  eventId,
+  onChange,
+}: {
+  eventId: string;
+  onChange: (count: number) => void;
+}) {
+  const [members, setMembers] = useState<DirectoryMember[]>();
+  const [participants, setParticipants] = useState<EventParticipant[]>([]);
+  const [search, setSearch] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const path = `/events/${eventId}/participants`;
+  useEffect(() => {
+    Promise.all([api("/mentor/members"), api(path)])
+      .then(([directory, roster]) => {
+        setParticipants(roster);
+        setMembers(
+          directory.filter((m: DirectoryMember) => m.role === "STUDENT"),
+        );
+      })
+      .catch((e) => setError(e.message));
+  }, [path]);
+  const added = new Set(participants.map((m) => m.memberId));
+  const matches = members?.filter(
+    (m) =>
+      !added.has(m.memberId) &&
+      m.displayName.toLowerCase().includes(search.trim().toLowerCase()),
+  );
+  async function add(m: DirectoryMember) {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const { displayName, creditedSeconds } = await api(path, {
+        memberId: m.memberId,
+      });
+      const next = [
+        ...participants,
+        { memberId: m.memberId, displayName, creditedSeconds },
+      ];
+      setParticipants(next);
+      onChange(next.length);
+      setMessage(
+        `${displayName} added · ${duration(creditedSeconds)} credited`,
+      );
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function remove(m: EventParticipant) {
+    const reason = prompt(
+      `Remove ${m.displayName} from this event? Enter the correction reason.`,
+    );
+    if (!reason) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await api(
+        `${path}/${encodeURIComponent(m.memberId)}`,
+        { reason },
+        "DELETE",
+      );
+      const next = participants.filter(
+        (participant) => participant.memberId !== m.memberId,
+      );
+      setParticipants(next);
+      onChange(next.length);
+      setMessage(`${m.displayName} removed`);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <>
+      <section className="event-picker" aria-label="Add participants">
+        <label>
+          Search students
+          <input
+            type="search"
+            placeholder="Search by name"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </label>
+        {matches ? (
+          matches.length > 0 ? (
+            <ul className="event-member-list">
+              {matches.map((m) => (
+                <li key={m.memberId} className="list-row">
+                  <span>{m.displayName}</span>
+                  <button
+                    disabled={busy}
+                    onClick={() => add(m)}
+                    aria-label={`Add ${m.displayName}`}
+                  >
+                    Add
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="muted">
+              {search.trim()
+                ? "No available students match your search."
+                : "No students available to add."}
+            </p>
+          )
+        ) : (
+          !error && <p className="muted">Loading students…</p>
+        )}
+      </section>
+      {error && (
+        <p role="alert" className="notice error">
+          {error}
+        </p>
+      )}
+      <p role="status" className="success">
+        {message}
+      </p>
+      <section aria-label="Participants">
+        <div className="section-label">
+          PARTICIPANTS <span>{participants.length}</span>
+        </div>
+        {participants.map((m) => (
+          <div className="list-row" key={m.memberId}>
+            <span>
+              {m.displayName}
+              <small>{duration(m.creditedSeconds)} credited</small>
+            </span>
+            <button
+              className="quiet danger"
+              disabled={busy}
+              onClick={() => remove(m)}
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+      </section>
     </>
   );
 }

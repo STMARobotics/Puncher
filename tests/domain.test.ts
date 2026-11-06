@@ -157,7 +157,7 @@ describe("shop attendance", () => {
   it("forbids device and student operational mutations and disabled devices", async () => {
     const { app, db } = await fixture();
     await expect(app.updateMember(device, "x", {})).rejects.toThrow("Administrator");
-    await expect(app.award(device, "x", "000123")).rejects.toThrow("Mentor");
+    await expect(app.award(device, "x", "member-a")).rejects.toThrow("Mentor");
     await atomic(db, async (tx) => {
       const d = await tx.get(key("DEVICE#test-device"));
       await tx.put({ ...d!, enabled: false });
@@ -165,7 +165,7 @@ describe("shop attendance", () => {
     await expect(app.scan(device, "000123", uid())).rejects.toThrow("disabled");
   });
 });
-describe("volunteer", () => {
+describe("event attendance", () => {
   it("uniquely awards event credit across phones, locks snapshots, audits removal", async () => {
     const { app, db } = await fixture();
     const e = await app.saveEvent(mentor, {
@@ -173,9 +173,10 @@ describe("volunteer", () => {
       eventDate: "2026-06-01",
       hours: "1.25",
     });
+    expect(e.eventType).toBe("OUTREACH");
     const rs = await Promise.all([
-      app.award(mentor, e.eventId, "000123"),
-      app.award(mentor, e.eventId, "000123"),
+      app.award(mentor, e.eventId, "member-a"),
+      app.award(mentor, e.eventId, "member-a"),
     ]);
     expect(rs.map((r) => r.state).sort()).toEqual(["already", "logged"]);
     expect(
@@ -191,11 +192,23 @@ describe("volunteer", () => {
         e.eventId,
       ),
     ).rejects.toThrow("locked");
+    await expect(
+      app.saveEvent(
+        mentor,
+        {
+          title: e.title,
+          eventDate: e.eventDate,
+          hours: "1.25",
+          eventType: "COMPETITION",
+        },
+        e.eventId,
+      ),
+    ).rejects.toThrow("locked");
     await app.removeAward(
       mentor,
       e.eventId,
       "member-a",
-      "Wrong student scanned",
+      "Wrong student selected",
     );
     expect(
       (await all(db, "ATTENDANCE#member-a", { prefix: "VOLUNTEER#" }))[0].status,
@@ -211,7 +224,7 @@ describe("volunteer", () => {
       eventDate: "2026-06-01",
       hours: "2",
     });
-    await expect(app.award(mentor, e.eventId, "000123")).rejects.toThrow(
+    await expect(app.award(mentor, e.eventId, "member-a")).rejects.toThrow(
       "another mentor",
     );
   });

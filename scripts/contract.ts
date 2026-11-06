@@ -1,6 +1,6 @@
 // Generates language-neutral schemas and synthetic fixtures; check these files into source control.
 import { writeFileSync, mkdirSync } from "node:fs";
-import { SCHEMA_VERSION, roles, row } from "../service/model";
+import { SCHEMA_VERSION, eventTypes, roles, row } from "../service/model";
 const string = { type: "string" },
   seconds = { type: "integer", minimum: 0 },
   date = { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
@@ -92,6 +92,7 @@ const definitions: any = {
     ],
     properties: {
       eventId: string,
+      eventType: { enum: eventTypes },
       title: string,
       eventDate: date,
       reportingYear: { type: "integer" },
@@ -119,6 +120,10 @@ const definitions: any = {
       provenance: { type: "object" },
     },
   },
+};
+definitions.competition = {
+  ...definitions.volunteer,
+  sk: "^COMPETITION#.+#.+$",
 };
 const schemas = Object.fromEntries(
   Object.entries(definitions).map(([name, d]: [string, any]) => [
