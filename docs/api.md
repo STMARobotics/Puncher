@@ -1,6 +1,6 @@
 # API AND OPERATIONS
 
-All browser writes send JSON and the exact configured Origin. Human routes use a seven-day, server-side DynamoDB session referenced by a Secure, HttpOnly, SameSite=Lax cookie; the raw session value is never stored in DynamoDB. Google authorization-code flow uses state, nonce and PKCE. The callback validates Google's signed ID token before creating the session. Kiosk routes use a separate mentor-launched HttpOnly session cookie. Activation consumes a mentor-issued token and clears any human session in the kiosk browser. An eligible student signs in to retrieve their own attendance barcode. No ordinary human password exists. Lambda authorizers have zero cache TTL; handlers recheck enabled identities, roles, membership and event ownership. Student role alone grants no operational API access.
+All browser writes send JSON and the exact configured Origin. Human routes use a seven-day, server-side DynamoDB session referenced by a Secure, HttpOnly, SameSite=Lax cookie; the raw session value is never stored in DynamoDB. Google authorization-code flow uses state, nonce and PKCE. The callback verifies Google's signed ID token and creates a Student account and barcode on first sign-in. Kiosk routes use a separate mentor-launched HttpOnly session cookie. Activation consumes a mentor-issued token and clears any human session in the kiosk browser. Every signed-in member can view their own attendance barcode. No ordinary human password exists. Lambda authorizers have zero cache TTL; handlers recheck active users, their role, and event ownership. Student role alone grants no operational API access.
 
 | Method | Path | Authorization / behavior |
 | --- | --- | --- |
@@ -8,20 +8,12 @@ All browser writes send JSON and the exact configured Origin. Human routes use a
 | GET | /api/auth/login | Starts Google OIDC authorization-code flow |
 | GET | /api/auth/callback | Validates one-time OAuth state/code, creates session and redirects |
 | POST | /api/auth/logout | Origin-checked session revocation and cookie clearing |
-| GET | /api/me | Verified human session. Students receive their own active attendance barcode. |
+| GET | /api/me | Returns the signed-in member’s ID, role and barcode. |
 | POST | /api/mentor/kiosk/activation | Mentor. Issues a single-use activation code valid for two minutes. |
 | POST | /api/kiosk/activate | Accepts a scanned code with same-origin JSON. Consumes the token and sets the scoped kiosk cookie. |
 | GET | /api/mentor/kiosks | Mentor's sessions; administrator sees all |
 | DELETE | /api/mentor/kiosks/{sessionId} | Launching mentor or administrator; immediate revocation |
 | POST | /api/kiosk/end | Exact Origin and JSON; ends current session and clears cookie |
-| GET / POST | /api/mentor/members | Mentor; safe roster / create with automatic code and optional client-generated memberId UUID for retries |
-| PATCH | /api/mentor/members/{memberId} | Mentor; edit a roster entry without changing its native ID |
-| POST | /api/mentor/members/{memberId}/replace-card | Mentor; operationId UUID makes replacement idempotent |
-| POST | /api/mentor/roster/imports | Mentor. Validate CSV and stage a preview with `{importId,csv}` and optional `groupEmail` for older exports. |
-| GET | /api/mentor/roster/imports/{importId} | Uploading mentor. Preview, automatic matches and progress. |
-| POST | /api/mentor/roster/imports/{importId}/apply | Uploading mentor. Apply a batch with the current `cursor`. Retries return saved progress. |
-| GET | /api/admin/mentor-requests | Administrator; requests already in the queue |
-| POST | /api/admin/mentor-requests/{subject}/approve | Administrator; grants mentor plus explicitly selected extra permissions |
 | GET | /api/kiosk/status | Kiosk session availability, expiration and server time |
 | GET | /api/kiosk/totals | Device; anonymous team shop-hour totals only (week/year/all time) |
 | GET | /api/kiosk/occupants | Device; shop open status and current display names grouped by attendance role |
@@ -33,17 +25,16 @@ All browser writes send JSON and the exact configured Origin. Human routes use a
 | GET | /api/events/{eventId}/participants | Owner/admin roster |
 | POST | /api/events/{eventId}/scan | Owner/admin; `{barcode}` adds one server-derived award |
 | DELETE | /api/events/{eventId}/participants/{memberId} | Owner/admin; required `{reason}`; voids prior award |
-| GET / POST | /api/admin/members | Admin; roster / create explicit member/card |
-| PATCH | /api/admin/members/{memberId} | Admin; replace card or deactivate without changing history ID |
-| GET / POST | /api/admin/identities | Admin; exact subject/email/member/permissions mapping |
-| POST | /api/admin/members/{memberId}/invite-admin | Admin; creates a one-time invitation for an active roster entry and verified school Google email |
+| GET | /api/admin/members | Admin; list members created through Google sign-in |
+| PATCH | /api/admin/members/{memberId} | Admin; change name, role or active status with the current version |
+| POST | /api/admin/members/{memberId}/replace-card | Admin; replace a barcode using an operation ID for safe retries |
 | GET | /api/admin/devices | Legacy administrator session list; POST provisioning is retired |
 | DELETE | /api/admin/devices/{deviceId} | Admin; immediate revocation |
 | GET | /api/admin/active | Admin; active roster excludes logically expired visits |
 | GET | /api/admin/audit | Admin; recent scans/changes/rejected scans, paginated |
 | GET / POST | /api/admin/review | Admin; paginated imported rows / explicit reviewed disposition with reason |
 
-Lists for members/events are paginated internally by the server at this team size; audit/review expose an opaque cursor. GET audit defaults to newest first. The frontend gets one bounded operation list rather than per-row browser requests. Event creation/edit uses `{title,eventDate,hours,notes?}`. Member mutation uses `{displayName,memberKind,active,barcode?}`; an omitted/blank card preserves an existing code or assigns a new one. Mentor UI always assigns codes automatically; use the idempotent replacement endpoint for a lost card. Identity mutation uses `{googleSub,email,enabled,roles,memberId?}`. Separate CLI mapping format is documented in migration.md.
+Lists for members/events are paginated internally by the server at this team size; audit/review expose an opaque cursor. GET audit defaults to newest first. The frontend gets one bounded operation list rather than per-row browser requests. Event creation/edit uses `{title,eventDate,hours,notes?}`. Member edits use `{displayName,role,active,version}`. Choose one role from `STUDENT`, `MENTOR` and `ADMIN`. Role and active status changes require the member to be clocked out. Card replacement uses `{operationId}` and keeps attendance history.
 
 Kiosk replies distinguish in/out/cooldown and contain only display name, confirmation times, exact credited seconds/today total when applicable and pending missed-checkout warning. The browser never derives attendance state from a beep or guesses checkout time. A lost response reuses the same UUID and payload; a replay bound to another card is 409. Saved response retention is 24 hours with permanent replay tombstones; expired replay is 409 and needs adult reconciliation. No silent toggle retry with a fresh UUID and no offline queue. SCAN_COOLDOWN_SECONDS is configurable (1–60, default 5) on the API environment; cooldown also runs on the server and is per member. Each date transition bypasses the prior date's cooldown.
 

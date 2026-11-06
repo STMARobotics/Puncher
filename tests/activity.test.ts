@@ -45,7 +45,7 @@ describe('transactional activity capture', () => {
     const { app } = await fixture(db);
     await atomic(db, async (tx) =>
       tx.put(
-        row('MEMBER#member-a', 'VOLUNTEER#2026-05-31#legacy', {
+        row('ATTENDANCE#member-a', 'VOLUNTEER#2026-05-31#legacy', {
           creditedSeconds: 120,
           eventDate: '2026-05-31',
           status: 'pending_review',
@@ -54,7 +54,7 @@ describe('transactional activity capture', () => {
       ),
     );
     const input = {
-      pk: 'MEMBER#member-a',
+      pk: 'ATTENDANCE#member-a',
       sk: 'VOLUNTEER#2026-05-31#legacy',
       reason: 'reviewed original record',
     };
@@ -71,14 +71,14 @@ describe('transactional activity capture', () => {
   it('does not persist an outbox if any other conditional write fails', async () => {
     const db = new MemoryStore({ orgId: 'example-team' });
     await fixture(db);
-    const member = await db.get(key('MEMBER#member-a'));
+    const member = await db.get(key('ATTENDANCE#member-a'));
     await expect(
       db.commit([
-        { key: key('MEMBER#member-a'), before: { ...member!, v: -1 }, after: member },
+        { key: key('ATTENDANCE#member-a'), before: { ...member!, v: -1 }, after: member },
         {
-          key: key('MEMBER#member-a', 'SHOP#test'),
+          key: key('ATTENDANCE#member-a', 'SHOP#test'),
           before: undefined,
-          after: row('MEMBER#member-a', 'SHOP#test', {
+          after: row('ATTENDANCE#member-a', 'SHOP#test', {
             status: 'completed',
             endedAt: '2026-05-31T20:00:00.000Z',
             cutoffAt: '2026-06-01T05:00:00.000Z',

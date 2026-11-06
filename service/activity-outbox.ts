@@ -10,7 +10,7 @@ export function appendActivityEvents(changes: Change[], config?: { orgId: string
   for (const change of changes) {
     if (
       change.checkOnly ||
-      !change.key.pk.startsWith('MEMBER#') ||
+      !change.key.pk.startsWith('ATTENDANCE#') ||
       !/^(SHOP|LEGACYSHOP|VOLUNTEER)#/.test(change.key.sk)
     )
       continue;
@@ -36,7 +36,7 @@ export function appendActivityEvents(changes: Change[], config?: { orgId: string
       orgId: config.orgId,
       entityId: change.key.pk + '/' + change.key.sk,
       entityVersion: (before?.v ?? 0) + 1,
-      subject: { namespace: 'puncher.member', id: change.key.pk.slice('MEMBER#'.length) },
+      subject: { namespace: 'puncher.member', id: change.key.pk.slice('ATTENDANCE#'.length) },
       occurredAt,
       effectiveDate: date(current),
       metrics: change.key.sk.startsWith('VOLUNTEER#')

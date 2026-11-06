@@ -6,13 +6,13 @@ import {
   DeleteTableCommand,
 } from "@aws-sdk/client-dynamodb";
 import { DynamoStore, all } from "../service/store";
-import { fixture, device, admin, mentor } from "./helpers";
+import { fixture, seedUser, device, admin, mentor } from "./helpers";
 import { uid, eligible, key, hash } from "../service/model";
 import { row } from "../service/model";
 import { atomic } from "../service/store";
 import { shopTotals } from "../service/shop-totals";
 import { assignCard } from "../service/card-codes";
-import { previewRoster, applyRosterBatch } from "../service/roster-import";
+import { registerUser } from "../service/users";
 const endpoint = process.env.DYNAMODB_ENDPOINT || "http://127.0.0.1:8000";
 assert.ok(["localhost", "127.0.0.1"].includes(new URL(endpoint).hostname));
 const client = new DynamoDBClient({
@@ -97,57 +97,61 @@ test("real DynamoDB preserves a member visit through a cross-kiosk shop closure"
   const secondKiosk = {
     kind: "device" as const,
     id: opening.sessionId,
-    roles: [],
   };
   await app.scan(device, "000123", uid());
   advance(60);
-  const before = await db.get(key("MEMBER#member-a", "CURRENT"));
+  const before = await db.get(key("ATTENDANCE#member-a", "CURRENT"));
   await app.scan(secondKiosk, opening.barcode, uid());
   assert.equal((await app.kioskOccupants(device)).shopOpen, false);
-  assert.deepEqual(await db.get(key("MEMBER#member-a", "CURRENT")), before);
+  assert.deepEqual(await db.get(key("ATTENDANCE#member-a", "CURRENT")), before);
   advance(120);
   await assert.rejects(app.scan(device, "000456", uid()), /Shop closed/);
   assert.equal((await app.scan(device, "000123", uid())).creditedSeconds, 60);
 });
 
-test("CSV import and card replacement preserve canonical attendance on real DynamoDB", async () => {
-  const { db, app, advance } = await setup({ orgId: "example-team" });
+test("concurrent first sign-ins create one Student and one card on real DynamoDB", async () => {
+  const { db } = await setup();
+  const profile = {
+    sub: "new-google-sub",
+    email: "new@stmarobotics.org",
+    name: "New Member",
+  };
+  const users = await Promise.all(
+    Array.from({ length: 5 }, () => registerUser(db, profile)),
+  );
+  assert.equal(new Set(users.map((user) => user.barcode)).size, 1);
+  const user = await db.get(key("USER#" + profile.sub));
+  assert.equal(user?.role, "STUDENT");
+  assert.equal(
+    (await db.get(key("CARD#" + user?.barcode)))?.memberId,
+    profile.sub,
+  );
+});
+
+test("card replacement preserves canonical attendance on real DynamoDB", async () => {
+  const { db, app, advance } = await setup();
   await app.scan(device, "000123", uid());
   advance(60);
   await app.scan(device, "000123", uid());
-  const hours = await all(db, "MEMBER#member-a", { prefix: "SHOP#" });
-  const job = await previewRoster(
-    db,
-    mentor,
-    uid(),
-    "Member Name,Member Email,Member Role\nAlex Example,alex@stmarobotics.org,MEMBER\n",
-    "frc.students@stmarobotics.org",
-  );
-  const batches = await Promise.all([
-    applyRosterBatch(db, mentor, job.importId, 0),
-    applyRosterBatch(db, mentor, job.importId, 0),
-  ]);
-  assert.equal(batches[0].status, "completed");
-  assert.deepEqual(batches[0], batches[1]);
-  assert.equal((await db.get(key("MEMBER#member-a")))?.barcode, "000123");
-  assert.deepEqual(
-    await all(db, "MEMBER#member-a", { prefix: "SHOP#" }),
-    hours,
-  );
+  const hours = await all(db, "ATTENDANCE#member-a", { prefix: "SHOP#" });
   const operationId = uid();
   const replacements = await Promise.all([
-    app.replaceCard(mentor, "member-a", operationId),
-    app.replaceCard(mentor, "member-a", operationId),
+    app.replaceCard(admin, "member-a", operationId),
+    app.replaceCard(admin, "member-a", operationId),
   ]);
   assert.equal(replacements[0].barcode, replacements[1].barcode);
   assert.notEqual(replacements[0].barcode, "000123");
-  assert.equal(await db.get(key("CARD#000123")), undefined);
-  assert.equal((await db.get(key("CARDCODE#000123")))?.memberId, "member-a");
+  assert.deepEqual(
+    await all(db, "ATTENDANCE#member-a", { prefix: "SHOP#" }),
+    hours,
+  );
+  const retired = await db.get(key("CARD#000123"));
+  assert.equal(retired?.memberId, "member-a");
+  assert.equal(retired?.retired, true);
   await assert.rejects(
     atomic(db, (tx) => assignCard(tx, "member-b", "000123")),
   );
 });
-
 test("concurrent code allocation retries collisions against real DynamoDB conditions", async () => {
   const { db } = await setup();
   const allocate = (id: string, fallback: string) => {
@@ -217,7 +221,7 @@ test("real DynamoDB transactions: concurrent scans, durable retry and per-member
   assert.equal((await app.scan(device, "000123", id)).state, "in");
   assert.equal((await app.scan(device, "000123", uid())).creditedSeconds, 60);
   assert.equal(
-    (await all(db, "MEMBER#member-a", { prefix: "SHOP#" })).filter(eligible)
+    (await all(db, "ATTENDANCE#member-a", { prefix: "SHOP#" })).filter(eligible)
       .length,
     1,
   );
@@ -263,18 +267,7 @@ test("aggregate shop totals use real paginated canonical queries and a durable r
 test("real conditional card claim and event uniqueness across competing writers", async () => {
   const { app, db } = await setup();
   const rs = await Promise.allSettled(
-    ["c", "d"].map((id) =>
-      app.saveMember(
-        admin,
-        {
-          displayName: id,
-          memberKind: "student",
-          active: true,
-          barcode: "999999",
-        },
-        id,
-      ),
-    ),
+    ["c", "d"].map((id) => seedUser(db, id, id, "STUDENT", "999999")),
   );
   assert.equal(rs.filter((r) => r.status === "fulfilled").length, 1);
   const e = await app.saveEvent(mentor, {
@@ -287,7 +280,7 @@ test("real conditional card claim and event uniqueness across competing writers"
   );
   assert.equal(awards.filter((r) => r.state === "logged").length, 1);
   assert.equal(
-    (await all(db, "MEMBER#member-a", { prefix: "VOLUNTEER#" })).length,
+    (await all(db, "ATTENDANCE#member-a", { prefix: "VOLUNTEER#" })).length,
     1,
   );
 });
@@ -306,8 +299,8 @@ test("real cleanup racing a new scan preserves completed credit and new session"
   ]);
   assert.equal(scan.state, "in");
   await app.cleanup();
-  assert.ok((await db.get(key("MEMBER#member-a", "CURRENT")))?.sessionId);
-  const sessions = await all(db, "MEMBER#member-a", { prefix: "SHOP#" });
+  assert.ok((await db.get(key("ATTENDANCE#member-a", "CURRENT")))?.sessionId);
+  const sessions = await all(db, "ATTENDANCE#member-a", { prefix: "SHOP#" });
   assert.equal(
     sessions.filter(eligible).reduce((n, r) => n + r.creditedSeconds, 0),
     300,
@@ -328,7 +321,7 @@ test("paginated catch-up processes more than one DynamoDB page", async () => {
           pk: "ACTIVE",
           sk: `2000-01-01#orphan${i}`,
           v: 1,
-          schemaVersion: 1,
+          schemaVersion: 2,
           cutoffAt: "2000-01-01T00:00:00Z",
           memberId: `orphan${i}`,
           sessionId: `old${i}`,

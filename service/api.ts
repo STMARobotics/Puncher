@@ -7,11 +7,6 @@ import {
   cookieValue,
   sessionCookieName,
 } from "./auth";
-import {
-  previewRoster,
-  rosterImportStatus,
-  applyRosterBatch,
-} from "./roster-import";
 import { store, runtime, publicConfig } from "./runtime";
 import { all, atomic, type Store } from "./store";
 import {
@@ -23,6 +18,7 @@ import {
   key,
   hash,
   kioskExpiry,
+  SCHEMA_VERSION,
 } from "./model";
 import {
   beginGoogleSignIn,
@@ -86,14 +82,14 @@ export async function dispatch(req: Request, db: Store = store()) {
     if (method === "GET" && path === "/api/health") {
       const schema = await db.get(key("APP#PUNCHER", "SCHEMA"));
       assert(
-        schema?.schemaVersion === 1,
+        schema?.schemaVersion === SCHEMA_VERSION,
         "Unsupported or missing attendance schema. Run provisioning.",
         503,
       );
-      return response(200, { status: "ok", schemaVersion: 1 });
+      return response(200, { status: "ok", schemaVersion: SCHEMA_VERSION });
     }
     if (method === "GET" && path === "/api/auth/login")
-      return beginGoogleSignIn(db, req.query);
+      return beginGoogleSignIn(db);
     if (method === "GET" && path === "/api/auth/callback")
       return finishGoogleSignIn(req.query || {}, headers, db);
     if (method !== "GET") {
@@ -196,26 +192,8 @@ export async function dispatch(req: Request, db: Store = store()) {
       throw new Fault(404, "Route not found.");
     }
     const p = await human(headers, db);
-    if (path === "/api/me" && method === "GET") {
-      const student = p.roles.length === 1 && p.roles[0] === "student";
-      const member = p.memberId
-        ? await db.get(key("MEMBER#" + p.memberId))
-        : undefined;
-      if (student)
-        assert(
-          member?.active &&
-            member.memberKind === "student" &&
-            /^[0-9]{6}$/.test(member.barcode),
-          "Ask a mentor to assign your attendance card.",
-          403,
-        );
-      return response(200, {
-        id: p.id,
-        roles: p.roles,
-        memberId: p.memberId,
-        ...(member?.active ? { barcode: member.barcode } : {}),
-      });
-    }
+    if (path === "/api/me" && method === "GET")
+      return response(200, { id: p.id, role: p.role, barcode: p.barcode });
     mentor(p);
     if (path === "/api/mentor/kiosk/activation" && method === "POST")
       return response(201, await app.issueKioskActivation(p));
@@ -226,7 +204,7 @@ export async function dispatch(req: Request, db: Store = store()) {
           .filter(
             (d) =>
               d.sessionType === "mentor-launch" &&
-              (p.roles.includes("admin") || d.launchedBy === p.id),
+              (p.role === "ADMIN" || d.launchedBy === p.id),
           )
           .map(({ deviceId, label, enabled, expiresAt, launchedAt }) => ({
             sessionId: deviceId,
@@ -239,77 +217,13 @@ export async function dispatch(req: Request, db: Store = store()) {
     const sessionToEnd = path.match(/^\/api\/mentor\/kiosks\/([^/]+)$/);
     if (sessionToEnd && method === "DELETE")
       return response(200, await app.revokeDevice(p, sessionToEnd[1]));
-    if (path === "/api/mentor/roster/imports" && method === "POST")
-      return response(
-        201,
-        await previewRoster(db, p, b.importId, b.csv, b.groupEmail),
-      );
-    const csvImport = path.match(
-      /^\/api\/mentor\/roster\/imports\/([^/]+)(?:\/(apply))?$/,
-    );
-    if (csvImport && method === "GET" && !csvImport[2])
-      return response(200, await rosterImportStatus(db, p, csvImport[1]));
-    if (csvImport && method === "POST" && csvImport[2])
-      return response(
-        200,
-        await applyRosterBatch(db, p, csvImport[1], b.cursor),
-      );
-    if (path.startsWith("/api/mentor/roster/"))
-      throw new Fault(
-        410,
-        "Use Upload roster CSV in mentor tools. Google directory sync has been retired.",
-      );
-    if (path === "/api/mentor/members" && method === "GET")
-      return response(
-        200,
-        (await all(db, "MEMBERS", { index: "GSI1" })).map(
-          ({
-            memberId,
-            displayName,
-            email,
-            active,
-            memberKind,
-            barcode,
-            csvEmail,
-            v,
-          }) => ({
-            memberId,
-            displayName,
-            email,
-            active,
-            memberKind,
-            barcode,
-            csvManaged: !!csvEmail,
-            version: v,
-          }),
-        ),
-      );
-    if (path === "/api/mentor/members" && method === "POST") {
-      assert(
-        b.memberId === undefined ||
-          (typeof b.memberId === "string" &&
-            /^[0-9a-f-]{36}$/.test(b.memberId)),
-        "Invalid roster request ID.",
-      );
-      return response(201, await app.saveMember(p, b, b.memberId));
-    }
-    const mentorMember = path.match(
-      /^\/api\/mentor\/members\/([^/]+)(?:\/(replace-card))?$/,
-    );
-    if (mentorMember && method === "PATCH" && !mentorMember[2])
-      return response(200, await app.saveMember(p, b, mentorMember[1]));
-    if (mentorMember?.[2] && method === "POST")
-      return response(
-        200,
-        await app.replaceCard(p, mentorMember[1], b.operationId),
-      );
     if (path === "/api/events" && method === "GET") {
       mentor(p);
       const es = await all(db, "EVENTS", { index: "GSI1" });
       return response(
         200,
         es
-          .filter((e) => p.roles.includes("admin") || e.mentorSub === p.id)
+          .filter((e) => p.role === "ADMIN" || e.mentorSub === p.id)
           .map(
             ({
               eventId,
@@ -366,73 +280,28 @@ export async function dispatch(req: Request, db: Store = store()) {
       }
     }
     admin(p);
-    if (path === "/api/admin/mentor-requests" && method === "GET")
-      return response(
-        200,
-        (await all(db, "MENTOR_REQUESTS", { index: "GSI1" })).map(
-          ({ googleSub, displayName, email, requestedAt }) => ({
-            googleSub,
-            displayName,
-            email,
-            requestedAt,
-          }),
-        ),
-      );
-    const mentorRequest = path.match(
-      /^\/api\/admin\/mentor-requests\/([^/]+)\/approve$/,
-    );
-    if (mentorRequest && method === "POST") {
-      return response(
-        200,
-        await app.approveMentor(
-          p,
-          mentorRequest[1],
-          b.administrator === true,
-          b.statsReports === true,
-        ),
-      );
-    }
     if (path === "/api/admin/members" && method === "GET")
       return response(
         200,
-        (await all(db, "MEMBERS", { index: "GSI1" })).map(
-          ({ memberId, displayName, active, memberKind, barcode }) => ({
+        (await all(db, "USERS", { index: "GSI1" })).map(
+          ({ memberId, displayName, email, active, role, barcode, v }) => ({
             memberId,
             displayName,
-            active,
-            memberKind,
-            barcode,
-          }),
-        ),
-      );
-    if (path === "/api/admin/members" && method === "POST")
-      return response(201, await app.saveMember(p, b));
-    const adminInvite = path.match(
-      /^\/api\/admin\/members\/([^/]+)\/invite-admin$/,
-    );
-    if (adminInvite && method === "POST")
-      return response(
-        201,
-        await app.inviteAdministrator(p, adminInvite[1], b.email),
-      );
-    const member = path.match(/^\/api\/admin\/members\/([^/]+)$/);
-    if (member && method === "PATCH")
-      return response(200, await app.saveMember(p, b, member[1]));
-    if (path === "/api/admin/identities" && method === "POST")
-      return response(200, await app.saveIdentity(p, b));
-    if (path === "/api/admin/identities" && method === "GET")
-      return response(
-        200,
-        (await all(db, "IDENTITIES", { index: "GSI1" })).map(
-          ({ googleSub, memberId, email, enabled, roles }) => ({
-            googleSub,
-            memberId,
             email,
-            enabled,
-            roles,
+            active,
+            role,
+            barcode,
+            version: v,
           }),
         ),
       );
+    const member = path.match(
+      /^\/api\/admin\/members\/([^/]+)(?:\/(replace-card))?$/,
+    );
+    if (member && method === "PATCH" && !member[2])
+      return response(200, await app.updateMember(p, member[1], b));
+    if (member?.[2] && method === "POST")
+      return response(200, await app.replaceCard(p, member[1], b.operationId));
     if (path === "/api/admin/active" && method === "GET")
       return response(200, await app.roster(p));
     if (path === "/api/admin/devices" && method === "POST")

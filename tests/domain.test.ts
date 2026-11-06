@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fixture, admin, mentor, device } from "./helpers";
+import { seedUser, fixture, admin, mentor, device } from "./helpers";
 import { all, atomic } from "../service/store";
 import {
   key,
@@ -29,25 +29,17 @@ describe("shop attendance", () => {
       todaySeconds: 3781,
     });
     expect(
-      (await all(db, "MEMBER#member-a", { prefix: "SHOP#" })).filter(eligible),
+      (await all(db, "ATTENDANCE#member-a", { prefix: "SHOP#" })).filter(eligible),
     ).toHaveLength(2);
   });
   it("rejects malformed, unknown and inactive cards without attendance mutation", async () => {
     const { app, db } = await fixture();
     for (const card of ["123", "1234567", "123\n", "abcdef", "999999"])
       await expect(app.scan(device, card, uid())).rejects.toThrow();
-    await app.saveMember(
-      admin,
-      {
-        displayName: "Alex Example",
-        memberKind: "student",
-        active: false,
-        barcode: "000123",
-      },
-      "member-a",
-    );
+    const user = (await db.get(key("USER#member-a")))!;
+    await app.updateMember(admin, "member-a", { displayName: user.displayName, role: user.role, active: false, version: user.v });
     await expect(app.scan(device, "000123", uid())).rejects.toThrow("inactive");
-    expect(await all(db, "MEMBER#member-a", { prefix: "SHOP#" })).toHaveLength(
+    expect(await all(db, "ATTENDANCE#member-a", { prefix: "SHOP#" })).toHaveLength(
       0,
     );
   });
@@ -81,25 +73,14 @@ describe("shop attendance", () => {
       Array.from({ length: 5 }, () => app.scan(device, "000123", uid())),
     );
     expect(rapid.every((r) => r.state === "cooldown")).toBe(true);
-    expect(await all(db, "MEMBER#member-a", { prefix: "SHOP#" })).toHaveLength(
+    expect(await all(db, "ATTENDANCE#member-a", { prefix: "SHOP#" })).toHaveLength(
       1,
     );
   });
   it("enforces transactional card uniqueness during concurrent assignment", async () => {
-    const { app } = await fixture();
+    const { db } = await fixture();
     const rs = await Promise.allSettled(
-      ["new-a", "new-b"].map((id) =>
-        app.saveMember(
-          admin,
-          {
-            displayName: id,
-            memberKind: "student",
-            active: true,
-            barcode: "009999",
-          },
-          id,
-        ),
-      ),
+      ["new-a", "new-b"].map((id) => seedUser(db, id, id, "STUDENT", "999999")),
     );
     expect(rs.filter((r) => r.status === "fulfilled")).toHaveLength(1);
   });
@@ -116,7 +97,7 @@ describe("shop attendance", () => {
       result = await app.scan(device, "000123", id);
     expect(result.state).toBe("in");
     expect(result.warning.shopDate).toBe("2026-05-31");
-    const sessions = await all(db, "MEMBER#member-a", { prefix: "SHOP#" });
+    const sessions = await all(db, "ATTENDANCE#member-a", { prefix: "SHOP#" });
     expect(
       sessions.filter(eligible).reduce((n, r) => n + r.creditedSeconds, 0),
     ).toBe(600);
@@ -125,11 +106,11 @@ describe("shop attendance", () => {
         ?.creditedSeconds,
     ).toBe(0);
     expect(
-      (await db.get(key("MEMBER#member-a", "CURRENT")))?.warning,
+      (await db.get(key("ATTENDANCE#member-a", "CURRENT")))?.warning,
     ).toBeTruthy();
     await app.acknowledge(device, id, result.warning.id);
     expect(
-      (await db.get(key("MEMBER#member-a", "CURRENT")))?.warning,
+      (await db.get(key("ATTENDANCE#member-a", "CURRENT")))?.warning,
     ).toBeNull();
   });
   it("starts a new visit after cutoff even within the cooldown", async () => {
@@ -159,7 +140,7 @@ describe("shop attendance", () => {
     const opening = await openShop();
     await Promise.all([app.cleanup(), app.scan(device, "000123", uid())]);
     await app.cleanup();
-    const current = await db.get(key("MEMBER#member-a", "CURRENT"));
+    const current = await db.get(key("ATTENDANCE#member-a", "CURRENT"));
     expect(current?.sessionId).toBeTruthy();
     expect((await all(db, "ACTIVE")).length).toBe(2);
     const mentorCard = await db.get(key("CARD#" + opening.barcode));
@@ -175,7 +156,7 @@ describe("shop attendance", () => {
   });
   it("forbids device and student operational mutations and disabled devices", async () => {
     const { app, db } = await fixture();
-    await expect(app.saveMember(device, {}, "x")).rejects.toThrow("Mentor");
+    await expect(app.updateMember(device, "x", {})).rejects.toThrow("Administrator");
     await expect(app.award(device, "x", "000123")).rejects.toThrow("Mentor");
     await atomic(db, async (tx) => {
       const d = await tx.get(key("DEVICE#test-device"));
@@ -198,7 +179,7 @@ describe("volunteer", () => {
     ]);
     expect(rs.map((r) => r.state).sort()).toEqual(["already", "logged"]);
     expect(
-      (await all(db, "MEMBER#member-a", { prefix: "VOLUNTEER#" })).reduce(
+      (await all(db, "ATTENDANCE#member-a", { prefix: "VOLUNTEER#" })).reduce(
         (n, r) => n + r.creditedSeconds,
         0,
       ),
@@ -217,13 +198,13 @@ describe("volunteer", () => {
       "Wrong student scanned",
     );
     expect(
-      (await all(db, "MEMBER#member-a", { prefix: "VOLUNTEER#" }))[0].status,
+      (await all(db, "ATTENDANCE#member-a", { prefix: "VOLUNTEER#" }))[0].status,
     ).toBe("voided");
     expect(
       await all(db, `EVENT#${e.eventId}`, { prefix: "PARTICIPANT#" }),
     ).toHaveLength(0);
   });
-  it("enforces ownership, server event duration and explicit role binding uniqueness", async () => {
+  it("enforces event ownership", async () => {
     const { app } = await fixture();
     const e = await app.saveEvent(admin, {
       title: "Admin event",
@@ -233,28 +214,12 @@ describe("volunteer", () => {
     await expect(app.award(mentor, e.eventId, "000123")).rejects.toThrow(
       "another mentor",
     );
-    await app.saveIdentity(admin, {
-      googleSub: "sub-a",
-      email: "example@stmarobotics.org",
-      memberId: "member-a",
-      roles: ["student"],
-      enabled: true,
-    });
-    await expect(
-      app.saveIdentity(admin, {
-        googleSub: "sub-b",
-        email: "second@stmarobotics.org",
-        memberId: "member-a",
-        roles: ["student"],
-        enabled: true,
-      }),
-    ).rejects.toThrow("already linked");
   });
   it("does not offer a forfeited-shop restore path through import review", async () => {
     const { app } = await fixture();
     await expect(
       app.review(admin, {
-        pk: "MEMBER#member-a",
+        pk: "ATTENDANCE#member-a",
         sk: "CURRENT",
         status: "approved",
         reason: "Attempt",

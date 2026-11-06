@@ -9,9 +9,7 @@ import { hash, key, row } from "../service/model";
 import { atomic } from "../service/store";
 import { dispatch } from "../service/api";
 import { device as authenticateKiosk } from "../service/auth";
-import { fixture, mentor } from "./helpers";
-import { previewRoster, applyRosterBatch } from "../service/roster-import";
-import { uid } from "../service/model";
+import { fixture } from "./helpers";
 
 const original = { ...process.env };
 afterEach(() => {
@@ -30,35 +28,13 @@ function env() {
 }
 
 describe("server-managed OAuth sessions", () => {
-  it("lets only admins invite an existing roster member and binds the grant to their verified email", async () => {
+  it("creates exactly one Student with a stable card after verified Google sign-in", async () => {
     env();
     const { db } = await fixture();
-    process.env.LOCAL_AUTH_FIXTURES = "true";
-    const inviteRequest = (actor: string) =>
-      dispatch(
-        {
-          method: "POST",
-          path: "/api/admin/members/member-a/invite-admin",
-          headers: {
-            authorization: "Bearer " + actor,
-            origin: "http://localhost:5173",
-            "content-type": "application/json",
-          },
-          body: { email: "alex@stmarobotics.org" },
-        },
-        db,
-      );
-    expect((await inviteRequest("local-mentor")).statusCode).toBe(403);
-    const issued = await inviteRequest("local-admin");
-    expect(issued.statusCode).toBe(201);
-    const invite = new URL(JSON.parse(issued.body).path, "http://localhost:5173");
-    const query = Object.fromEntries(invite.searchParams);
-    const identityKey = key("IDENTITY#alex-subject");
-    const signIn = async (email: string) => {
-      const start = await dispatch(
-        { method: "GET", path: invite.pathname, query, headers: {} },
-        db,
-      );
+    const sub = "first-time-student";
+    const userKey = key("USER#" + sub);
+    const signIn = async (emailVerified = true) => {
+      const start = await beginGoogleSignIn(db);
       const state = new URL(start.headers.location as string).searchParams.get(
         "state",
       )!;
@@ -68,121 +44,51 @@ describe("server-managed OAuth sessions", () => {
         secret: async () => "test-secret",
         exchange: async () => Response.json({ id_token: "test-token" }),
         verify: async () => ({
-          sub: "alex-subject",
+          sub,
+          name: "First Student",
           iss: "accounts.google.com",
           aud: "test-client",
           hd: "stmarobotics.org",
-          email,
-          email_verified: true,
+          email: "first@stmarobotics.org",
+          email_verified: emailVerified,
           exp: Date.now() / 1000 + 300,
           iat: Date.now() / 1000,
           nonce: pending!.nonce,
         }),
       });
     };
-    expect(await db.get(identityKey)).toBeUndefined();
-    expect((await signIn("other@stmarobotics.org")).statusCode).toBe(403);
-    expect(await db.get(identityKey)).toBeUndefined();
-    const emailClaim = key("ROSTER_EMAIL#" + hash("alex@stmarobotics.org"));
-    const otherLogin = key("ROSTER_LOGIN#member-b");
-    await atomic(db, async (tx) => {
-      await tx.put(row(emailClaim.pk, emailClaim.sk, { memberId: "member-b" }));
-      await tx.put(row(otherLogin.pk, otherLogin.sk, { sub: "alex-subject" }));
+    expect((await signIn(false)).statusCode).toBe(401);
+    expect(await db.get(userKey)).toBeUndefined();
+    const results = await Promise.all([signIn(), signIn()]);
+    const user = await db.get(userKey);
+    expect(user).toMatchObject({
+      memberId: sub,
+      role: "STUDENT",
+      displayName: "First Student",
     });
-    expect((await signIn("alex@stmarobotics.org")).statusCode).toBe(409);
-    expect(await db.get(identityKey)).toBeUndefined();
-    await atomic(db, async (tx) => {
-      await tx.del(emailClaim);
-      await tx.del(otherLogin);
+    expect(user?.barcode).toMatch(/^\d{6}$/);
+    expect(await db.get(key("CARD#" + user?.barcode))).toMatchObject({
+      memberId: sub,
     });
-    expect((await signIn("alex@stmarobotics.org")).statusCode).toBe(303);
-    expect(await db.get(identityKey)).toMatchObject({
-      memberId: "member-a",
-      roles: ["admin"],
-      enabled: true,
-    });
-    expect((await db.get(key("MEMBER#member-a")))?.barcode).toBe("000123");
-    expect(await db.get(key("MENTOR_REQUEST#alex-subject"))).toBeUndefined();
-    expect((await signIn("alex@stmarobotics.org")).statusCode).toBe(403);
-  });
-
-  it("links a verified roster email to its Google subject and returns only its own barcode", async () => {
-    env();
-    const { db } = await fixture();
-    const email = "alex@stmarobotics.org";
-    const job = await previewRoster(
-      db,
-      mentor,
-      uid(),
-      "Member Name,Member Email,Member Role\nAlex Example," +
-        email +
-        ",MEMBER\n",
-      "frc.students@stmarobotics.org",
-    );
-    await applyRosterBatch(db, mentor, job.importId, 0);
-    const start = await beginGoogleSignIn(db);
-    const state = new URL(start.headers.location as string).searchParams.get(
-      "state",
-    )!;
-    const stateCookie = (start.headers["set-cookie"] as string[])[0].split(
-      ";",
-    )[0];
-    const pending = await db.get(key("OAUTH#" + hash(state)));
-    const payload = {
-      sub: "verified-student",
-      iss: "https://accounts.google.com",
-      aud: "test-client",
-      hd: "stmarobotics.org",
-      email,
-      email_verified: true,
-      exp: Date.now() / 1000 + 300,
-      nonce: pending!.nonce,
-      iat: Date.now() / 1000,
-    };
-    const finish = await finishGoogleSignIn(
-      { code: "test-code", state },
-      { cookie: stateCookie },
-      db,
-      {
-        secret: async () => "test-secret",
-        exchange: async () =>
-          new Response(JSON.stringify({ id_token: "test-token" })),
-        verify: async () => payload,
-      },
-    );
-    expect(finish.statusCode).toBe(303);
-    const cookie = (finish.headers["set-cookie"] as string[])
-      .find((c) => c.startsWith("puncher-local-session="))!
-      .split(";")[0];
-    const me = await dispatch(
-      { method: "GET", path: "/api/me", headers: { cookie } },
-      db,
-    );
-    expect(JSON.parse(me.body)).toMatchObject({
-      roles: ["student"],
-      memberId: "member-a",
-      barcode: "000123",
-    });
-    expect(await db.get(key("IDENTITY#verified-student"))).toBeUndefined();
-    expect(await db.get(key("MENTOR_REQUEST#verified-student"))).toBeUndefined();
-    await expect(
-      human({ authorization: "Bearer recycled-email" }, db, async () => ({
-        ...payload,
-        sub: "different-subject",
-      })),
-    ).rejects.toThrow("review your account link");
-    await atomic(db, async (tx) => {
-      const member = await tx.get(key("MEMBER#member-a"));
-      await tx.put({ ...member!, active: false });
-    });
-    expect(
-      (
-        await dispatch(
-          { method: "GET", path: "/api/me", headers: { cookie } },
-          db,
-        )
-      ).statusCode,
-    ).toBe(403);
+    expect(await db.get(key("IDENTITY#" + sub))).toBeUndefined();
+    expect(await db.get(key("MEMBER#" + sub))).toBeUndefined();
+    for (const result of results) {
+      expect(result.statusCode).toBe(303);
+      const cookie = (result.headers["set-cookie"] as string[])
+        .find((value) => value.startsWith("puncher-local-session="))!
+        .split(";")[0];
+      const me = await dispatch(
+        { method: "GET", path: "/api/me", headers: { cookie } },
+        db,
+      );
+      expect(JSON.parse(me.body)).toEqual({
+        id: sub,
+        role: "STUDENT",
+        barcode: user?.barcode,
+      });
+    }
+    await atomic(db, (tx) => tx.put({ ...user!, active: false }));
+    expect((await signIn()).statusCode).toBe(403);
   });
   it("atomically exchanges a persisted mentor session for kiosk-only access", async () => {
     env();
@@ -244,7 +150,7 @@ describe("server-managed OAuth sessions", () => {
         await dispatch(
           {
             method: "GET",
-            path: "/api/mentor/members",
+            path: "/api/admin/members",
             headers: { cookie: kioskCookie },
           },
           db,
@@ -257,15 +163,8 @@ describe("server-managed OAuth sessions", () => {
     const { db } = await fixture();
     await atomic(db, async (tx) => {
       await tx.put(
-        row("IDENTITY#legacy-student", "METADATA", {
-          enabled: true,
-          roles: ["student"],
-          memberId: "member-a",
-        }),
-      );
-      await tx.put(
         row("SESSION#" + hash("student"), "METADATA", {
-          sub: "legacy-student",
+          sub: "member-a",
           expiresAt: "2099-01-01T00:00:00.000Z",
         }),
       );

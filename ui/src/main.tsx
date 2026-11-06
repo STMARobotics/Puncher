@@ -12,6 +12,7 @@ import { ScanBuffer } from "./scanner";
 import { ScanEffects } from "./scan-effects";
 import { PuncherMark } from "./puncher-mark";
 import { activateKioskSession, KioskActivation } from "./kiosk-activation";
+import type { Role } from "../../service/model";
 const Camera = React.lazy(() =>
   import("./camera").then((module) => ({ default: module.Camera })),
 );
@@ -23,7 +24,7 @@ type Config = {
   googleClientId: string;
   localFixtures: boolean;
 };
-type Person = { id: string; roles: string[]; barcode?: string };
+type Person = { id: string; role: Role; barcode: string };
 function App() {
   const [config, setConfig] = useState<Config>(),
     [page, setPage] = useState(
@@ -39,9 +40,8 @@ function App() {
     [foreignPending, setForeignPending] = useState(
       sessionStorage.getItem("puncher-pending-foreign") === "true",
     );
-  const isMentor = person?.roles.some(
-    (role) => role === "mentor" || role === "admin",
-  );
+  const isAdmin = person?.role === "ADMIN";
+  const isMentor = isAdmin || person?.role === "MENTOR";
   useEffect(() => {
     const expired = () => {
       setPerson(undefined);
@@ -128,7 +128,9 @@ function App() {
   }
   const mentorActions = (
     <>
-      <button onClick={() => navigate("members")}>Manage members</button>
+      <button onClick={() => navigate("members")}>
+        {isAdmin ? "Manage members" : "Kiosk sessions"}
+      </button>
       <button onClick={() => navigate("new-event")}>
         Create a volunteer event
       </button>
@@ -220,14 +222,14 @@ function App() {
             <p>Scan at the kiosk to clock in or out.</p>
           </section>
         ) : page === "members" ? (
-          <MentorConsole administrator={person.roles.includes("admin")} />
+          <MentorConsole administrator={isAdmin} />
         ) : page === "events" || page === "new-event" ? (
           <Events key={page} startCreating={page === "new-event"} />
         ) : (
           <section className="panel mentor-dashboard">
             <h1>MENTOR DASHBOARD</h1>
             <p>
-              Manage members, organize volunteer events, or activate the shop
+              {isAdmin ? "Manage members, organize" : "Organize"} volunteer events, or activate the shop
               kiosk.
             </p>
             <div className="mentor-actions">{mentorActions}</div>
@@ -237,7 +239,7 @@ function App() {
               </React.Suspense>
             )}
             {person.barcode && (
-              <details className="mentor-pass">
+              <details open className="mentor-pass">
                 <summary>Your attendance barcode</summary>
                 <React.Suspense fallback={<p>Loading barcode…</p>}>
                   <PassCode
@@ -245,7 +247,7 @@ function App() {
                     label="Your attendance barcode"
                   />
                 </React.Suspense>
-                <p>Scan this barcode at the kiosk to check out.</p>
+                <p>Scan this barcode at the kiosk to clock in or out.</p>
               </details>
             )}
             {foreignPending && (

@@ -12,20 +12,20 @@ export async function assignCard(
 ): Promise<string> {
   for (let attempt = 0; attempt < 20; attempt++) {
     const code = barcode(preferred ?? nextCode());
-    const claim = await tx.get(key("CARD#" + code));
-    const reserved = await tx.get(key("CARDCODE#" + code));
-    if (!preferred && (claim || reserved)) continue;
-    if (
-      (claim && claim.memberId !== memberId) ||
-      (reserved && reserved.memberId !== memberId)
-    ) {
-      assert(!preferred, "Card is already assigned or retired.", 409);
-      continue;
+    const cardKey = key("CARD#" + code);
+    const card = await tx.get(cardKey);
+    if (!card) {
+      await tx.put(row(cardKey.pk, cardKey.sk, { memberId, retired: false }));
+      return code;
     }
-    if (!claim) await tx.put(row("CARD#" + code, "METADATA", { memberId }));
-    if (!reserved)
-      await tx.put(row("CARDCODE#" + code, "METADATA", { memberId }));
-    return code;
+    if (preferred) {
+      assert(
+        card.memberId === memberId && !card.retired,
+        "Card is already assigned or retired.",
+        409,
+      );
+      return code;
+    }
   }
   throw new Error("Unable to allocate a unique card code; retry.");
 }

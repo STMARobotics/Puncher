@@ -2,7 +2,7 @@
 
 The production domain is puncher.7028robotics.com. No AWS resources were deployed during implementation. Puncher does not reuse another app's OAuth client, AWS resource, or deployment role. Application resources run in us-east-2 and the CloudFront certificate in us-east-1.
 
-The single configuration is in `cdk/lib/config.ts`; CDK synthesizes one fixed set of Puncher stacks. The DynamoDB table name remains `puncher-prod-records` for the existing read-only Stats integration contract. Puncher stores OAuth state and seven-day server sessions in this existing table; DynamoDB TTL cleans up expired rows. Session cookies are Secure, HttpOnly and SameSite=Lax. Sessions are independent of other apps and do not require a shared database.
+The single configuration is in `cdk/lib/config.ts`; CDK synthesizes one fixed set of Puncher stacks. Schema v2 provisions a fresh DynamoDB table named `puncher-data`. CloudFormation retains the previous table under its existing retention policy. The separate Stats deployment must adopt the v2 reader contract and point to the new table outputs. Puncher stores OAuth state and seven-day server sessions in this existing table; DynamoDB TTL cleans up expired rows. Session cookies are Secure, HttpOnly and SameSite=Lax. Sessions are independent of other apps and do not require a shared database.
 
 ## Google OAuth setup
 
@@ -32,15 +32,12 @@ Create the account's GitHub OIDC provider operationally if absent, with provider
 
 CI validates pushes and pull requests without AWS credentials and never deploys them. A push to `main` automatically deploys after all validation—including database and browser tests—succeeds.
 
-After deployment use an authorized operator shell with APP_ENV=prod, TABLE_NAME=puncher-prod-records, no local endpoint/fixture flags, AWS_REGION=us-east-2, GOOGLE_CLIENT_ID and ALLOWED_ORIGIN set:
+After deployment, use an authorized AWS operator shell with `APP_ENV=prod`, `TABLE_NAME=puncher-data`, and `AWS_REGION=us-east-2`. Remove local endpoint and fixture settings from that shell.
 
-```powershell
-npm run provision -- schema
-$env:CONFIRM_BOOTSTRAP='true'
-npm run provision -- bootstrap-admin VERIFIED_GOOGLE_SUB administrator@stmarobotics.org
-```
-
-Get the stable subject from a server-verified Google credential for the intended account; never copy an unverified decoded token. This is an AWS-authorized command, not an anonymous API. Bootstrap is once only. A Puncher administrator provisions new mentors through the identity administration API using a verified Google subject. Attendance members are managed by mentors through the roster UI, including Google group CSV upload, automatic six-digit codes and CSV export for external ID-card generation. Existing identity bindings and history IDs are retained. Imports match by name and email and assign new attendance roles from the Google group. Kiosks expire at Chicago midnight or after 12 hours, whichever comes first, and can be revoked. Disabling the launching mentor invalidates that mentor's kiosk sessions. See [mentor roster imports](mentor-roster.md) for CSV formatting, member matching and retries. The Stats read contract and EventBridge activity contracts remain unchanged.
+1. Run `npm run provision -- schema` to initialize the table.
+2. Have the intended first Admin sign in with their school Google account. From the same signed-in browser, open `/api/me` and record the returned `id`.
+3. Set `$env:CONFIRM_BOOTSTRAP='true'` and run `npm run provision -- bootstrap-admin GOOGLE_SUB administrator@stmarobotics.org` with the exact ID and email. The command promotes the existing account once and keeps its barcode.
+4. Reload Puncher. Use **Manage members** to change roles after those members sign in.
 
 Subscribe operations staff to the AlarmTopicArn output and confirm delivery before launch. Alarms cover handler errors, API server errors, cleanup missing invocation and DLQ messages. EventBridge Scheduler invokes local midnight with America/Chicago timezone, flexible window OFF, retries and failure queue. Lambda async failure destination also catches execution failures. Inspect a failed invocation and rerun Cleanup with `{}`; pagination and exact-session conditional transactions safely catch up. Scan/read APIs enforce cutoff while cleanup is delayed. No restore/adjustment endpoint exists for forfeited time.
 
