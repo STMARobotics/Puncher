@@ -41,14 +41,14 @@ it("excludes expired visits before cleanup and expires the display precisely at 
   set("2026-06-01T05:00:00.000Z");
   expect((await app.kioskOccupants(device)).occupants).toEqual([]);
   expect(
-    (await db.get(key("MEMBER#member-a", "CURRENT")))?.sessionId,
+    (await db.get(key("ATTENDANCE#member-a", "CURRENT")))?.sessionId,
   ).toBeTruthy();
 });
 it("ignores stale active pointers, completed sessions, and deactivated members", async () => {
   const { app, db, advance } = await fixture();
   await app.scan(device, "000123", uid());
   await app.scan(device, "000456", uid());
-  const current = await db.get(key("MEMBER#member-a", "CURRENT"));
+  const current = await db.get(key("ATTENDANCE#member-a", "CURRENT"));
   await atomic(db, async (tx) => {
     await tx.put(
       row("ACTIVE", "2099-01-01#stale", {
@@ -57,19 +57,13 @@ it("ignores stale active pointers, completed sessions, and deactivated members",
         cutoffAt: "2099-01-01T00:00:00.000Z",
       }),
     );
-    const session = await tx.get(key("MEMBER#member-a", current!.sessionSk));
+    const session = await tx.get(key("ATTENDANCE#member-a", current!.sessionSk));
     await tx.put({ ...session!, status: "completed" });
   });
-  await app.saveMember(
-    admin,
-    {
-      displayName: "Jordan Sample",
-      memberKind: "student",
-      active: false,
-      barcode: "000456",
-    },
-    "member-b",
-  );
+  await atomic(db, async (tx) => {
+    const member = await tx.get(key("USER#member-b"));
+    await tx.put({ ...member!, active: false });
+  });
   expect((await app.kioskOccupants(device)).occupants).toEqual([]);
 });
 it("requires device authentication and immediately enforces revocation", async () => {

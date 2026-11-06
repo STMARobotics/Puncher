@@ -25,7 +25,7 @@ it("returns only aggregate eligible shop credit, including inactive members and 
       ["bad-date", "2026-02-30", 100, "approved"],
     ] as const)
       await tx.put(
-        row("MEMBER#member-a", `LEGACYSHOP#${date}#${id}`, {
+        row("ATTENDANCE#member-a", `LEGACYSHOP#${date}#${id}`, {
           memberId: "member-a",
           shopDate: date,
           status,
@@ -33,30 +33,22 @@ it("returns only aggregate eligible shop credit, including inactive members and 
         }),
       );
     await tx.put(
-      row("MEMBER#member-a", "VOLUNTEER#2026-06-01#volunteer", {
+      row("ATTENDANCE#member-a", "VOLUNTEER#2026-06-01#volunteer", {
         eventDate: "2026-06-01",
         status: "approved",
         creditedSeconds: 99999,
       }),
     );
     await tx.put(
-      row("MEMBER#member-a", "SHOP#forfeit#id", {
+      row("ATTENDANCE#member-a", "SHOP#forfeit#id", {
         shopDate: "2026-06-01",
         status: "forfeited_missing_checkout",
         creditedSeconds: 99999,
       }),
     );
   });
-  await app.saveMember(
-    admin,
-    {
-      displayName: "Alex Example",
-      memberKind: "student",
-      active: false,
-      barcode: "000123",
-    },
-    "member-a",
-  );
+  const member = (await db.get(key("USER#member-a")))!;
+  await app.updateMember(admin, "member-a", { displayName: member.displayName, role: member.role, active: false, version: member.v });
   const result = await shopTotals(
     db,
     device,
@@ -88,7 +80,7 @@ it("uses a bounded cache, rebuilds after review changes, and rejects a new schem
   expect((await shopTotals(db, device, clock)).allTimeSeconds).toBe(0);
   await atomic(db, async (tx) => {
     await tx.put(
-      row("MEMBER#member-a", "LEGACYSHOP#2026-06-01#approved", {
+      row("ATTENDANCE#member-a", "LEGACYSHOP#2026-06-01#approved", {
         shopDate: "2026-06-01",
         status: "approved",
         creditedSeconds: 600,
@@ -100,7 +92,7 @@ it("uses a bounded cache, rebuilds after review changes, and rejects a new schem
   expect((await shopTotals(db, device, clock)).allTimeSeconds).toBe(600);
   await atomic(db, async (tx) => {
     const schema = await tx.get(key("APP#PUNCHER", "SCHEMA"));
-    await tx.put({ ...schema!, schemaVersion: 2 } as any);
+    await tx.put({ ...schema!, schemaVersion: 1 } as any);
   });
   await expect(shopTotals(db, device, clock)).rejects.toThrow("Unsupported");
 });
@@ -109,7 +101,7 @@ it("rolls over June 2 and Monday in Chicago, including the fall DST boundary", a
   await atomic(db, async (tx) => {
     for (const date of ["2026-06-01", "2026-11-01"])
       await tx.put(
-        row("MEMBER#member-a", `LEGACYSHOP#${date}#test`, {
+        row("ATTENDANCE#member-a", `LEGACYSHOP#${date}#test`, {
           shopDate: date,
           status: "approved",
           creditedSeconds: 600,

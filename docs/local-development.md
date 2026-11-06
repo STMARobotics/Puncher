@@ -12,7 +12,7 @@ npm run seed
 npm run dev
 ```
 
-Open http://localhost:5173; the kiosk is http://localhost:5173/kiosk. The API binds to 127.0.0.1:3000. Local fixture buttons provide synthetic administrator, mentor and member accounts only when APP_ENV=local, a loopback DynamoDB endpoint is set, and no Lambda runtime is present. Open Start kiosk on the scanner device. Sign in as Local mentor in a separate window and generate the activation QR. Use Local member to display the synthetic attendance barcode. Test roster uploads with a synthetic Google-format CSV. See mentor-roster.md for supported columns. Cards 000123 and 000456 belong to fictional students. There is no browser-storage attendance database. Re-seeding preserves attendance; use an isolated table for tests.
+Open http://localhost:5173; the kiosk is http://localhost:5173/kiosk. The API binds to 127.0.0.1:3000. Local fixture buttons provide synthetic administrator, mentor and member accounts only when APP_ENV=local, a loopback DynamoDB endpoint is set, and no Lambda runtime is present. Open Start kiosk on the scanner device. Sign in as Local mentor in a separate window and generate the activation QR. Use Local student to display the synthetic attendance barcode. Use Local mentor administrator to edit member roles. Cards 000123 and 000456 belong to fictional students. There is no browser-storage attendance database. Re-seeding preserves attendance; use an isolated table for tests.
 
 Without Docker, download the official DynamoDB Local distribution from https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DynamoDBLocal.DownloadingAndRunning.html and run Java 17+ with the native library path:
 

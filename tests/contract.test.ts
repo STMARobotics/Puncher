@@ -1,7 +1,7 @@
 import { it, expect } from "vitest";
 import Ajv from "ajv";
-import schema from "../contracts/stats-reader.v1.json";
-import fixtures from "../contracts/fixtures/reader-v1.json";
+import schema from "../contracts/stats-reader.v2.json";
+import fixtures from "../contracts/fixtures/reader-v2.json";
 import { eligible, type Row } from "../service/model";
 import { fixture, device, mentor } from "./helpers";
 import { uid } from "../service/model";
@@ -25,6 +25,7 @@ it("language-neutral fixtures validate and have the specified eligible totals", 
 });
 it("actual writer sessions and awards satisfy the reader schema", async () => {
   const { app, db, advance } = await fixture();
+  expect(validate(await db.get({ pk: "USER#member-a", sk: "METADATA" }))).toBe(true);
   await app.scan(device, "000123", uid());
   advance(60);
   await app.scan(device, "000123", uid());
@@ -34,7 +35,7 @@ it("actual writer sessions and awards satisfy the reader schema", async () => {
     hours: "1",
   });
   await app.award(mentor, e.eventId, "000123");
-  for (const r of (await all(db, "MEMBER#member-a")).filter(
+  for (const r of (await all(db, "ATTENDANCE#member-a")).filter(
     (r) => r.sk !== "CURRENT",
   ))
     expect(validate(r), JSON.stringify(validate.errors)).toBe(true);

@@ -71,8 +71,7 @@ test("a mentor phone activates an anonymous kiosk and a member phone clocks atte
       name: "Students",
       exact: true,
     });
-    await expect(mentors.getByText("local mentor")).toBeVisible();
-    await mentor.getByText("Your attendance barcode", { exact: true }).click();
+    await expect(mentors.getByText("Taylor Mentor")).toBeVisible();
     const mentorCard = await readCode(
       mentor.getByRole("img", { name: "Your attendance barcode" }),
       BarcodeFormat.CODE_128,
@@ -181,7 +180,7 @@ test("a mentor phone activates an anonymous kiosk and a member phone clocks atte
     await expect(
       kiosk.getByRole("heading", { name: "SCAN YOUR ID" }),
     ).toBeVisible();
-    await expect(mentors.getByText("local mentor")).toBeVisible();
+    await expect(mentors.getByText("Taylor Mentor")).toBeVisible();
   } finally {
     await kiosk.close();
     await member.close();

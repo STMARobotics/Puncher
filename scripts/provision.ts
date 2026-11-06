@@ -1,167 +1,126 @@
-import { readFileSync } from "node:fs";
 import { store, runtime } from "../service/runtime";
+import { assignCard } from "../service/card-codes";
 import { atomic } from "../service/store";
-import { key, row, assert, hash, uid } from "../service/model";
-import { Puncher } from "../service/domain";
-const db = store(),
-  c = runtime(),
-  [command, ...args] = process.argv.slice(2);
-async function schema() {
+import { SCHEMA_VERSION, key, row, assert, hash, uid } from "../service/model";
+
+const db = store();
+const config = runtime();
+const [command, ...args] = process.argv.slice(2);
+
+async function initializeSchema() {
   await atomic(db, async (tx) => {
-    const old = await tx.get(key("APP#PUNCHER", "SCHEMA"));
-    assert(!old || old.schemaVersion === 1, "Unsupported schema.");
-    await tx.put(
-      row("APP#PUNCHER", "SCHEMA", {
-        timezone: "America/Chicago",
-        durationUnit: "seconds",
-        reportingYearConvention: "ending year; June 2 through June 1 inclusive",
-      }),
+    const schemaKey = key("APP#PUNCHER", "SCHEMA");
+    const schema = await tx.get(schemaKey);
+    assert(
+      !schema || schema.schemaVersion === SCHEMA_VERSION,
+      "Use a fresh table for schema v2.",
     );
+    if (!schema)
+      await tx.put(
+        row(schemaKey.pk, schemaKey.sk, {
+          timezone: "America/Chicago",
+          durationUnit: "seconds",
+          reportingYearConvention:
+            "ending year; June 2 through June 1 inclusive",
+        }),
+      );
   });
 }
-if (command === "schema") await schema();
-else if (command === "bootstrap-admin") {
-  const [googleSub, email] = args;
+
+if (command === "schema") {
+  await initializeSchema();
+} else if (command === "bootstrap-admin") {
+  const [sub, email] = args;
   assert(
-    googleSub && /^[^@]+@stmarobotics\.org$/.test(email || ""),
-    "Usage: provision bootstrap-admin VERIFIED_GOOGLE_SUB email@stmarobotics.org",
+    sub && /^[^@]+@stmarobotics\.org$/i.test(email || ""),
+    "Usage: provision bootstrap-admin GOOGLE_SUB email@stmarobotics.org",
   );
   assert(
     process.env.CONFIRM_BOOTSTRAP === "true",
-    "Set CONFIRM_BOOTSTRAP=true after verifying the subject through Google. Use an authorized AWS SSO operational identity.",
+    "Set CONFIRM_BOOTSTRAP=true to grant administrator access.",
   );
-  await schema();
+  await initializeSchema();
   await atomic(db, async (tx) => {
+    const bootstrapKey = key("APP#PUNCHER", "BOOTSTRAP");
     assert(
-      !(await tx.get(key("APP#PUNCHER", "BOOTSTRAP"))),
-      "First administrator is already provisioned. Use the admin UI.",
+      !(await tx.get(bootstrapKey)),
+      "The first administrator is already configured.",
     );
-    await tx.put(
-      row(`IDENTITY#${googleSub}`, "METADATA", {
-        googleSub,
-        email,
-        roles: ["admin", "stats:staff"],
-        enabled: true,
-        gsi1pk: "IDENTITIES",
-        gsi1sk: googleSub,
-      }),
+    const user = await tx.get(key("USER#" + sub));
+    assert(
+      user?.active && user.email === email.toLowerCase(),
+      "The intended administrator must sign in with that email first.",
     );
-    await tx.put(
-      row("APP#PUNCHER", "BOOTSTRAP", {
-        googleSub,
-        at: new Date().toISOString(),
-      }),
+    const current = await tx.get(key("ATTENDANCE#" + sub, "CURRENT"));
+    const at = new Date().toISOString();
+    assert(
+      !current?.sessionId || current.cutoffAt <= at,
+      "The member must clock out before their role changes.",
     );
+    await tx.put({ ...user, role: "ADMIN" });
+    await tx.put(row(bootstrapKey.pk, bootstrapKey.sk, { memberId: sub, at }));
     await tx.put(
-      row("AUDIT", `${new Date().toISOString()}#${uid()}`, {
+      row("AUDIT", at + "#" + uid(), {
         action: "admin.bootstrap",
         actor: "aws-operator",
-        target: googleSub,
+        target: sub,
+        at,
       }),
     );
   });
-  console.log("Administrator provisioned.");
+  console.log("Administrator configured.");
 } else if (command === "seed") {
-  assert(c.fixtures && c.endpoint, "Synthetic seed is DynamoDB Local only.");
-  await schema();
-  for (const [sub, roles] of [
-    ["local-admin", ["admin", "stats:staff"]],
-    ["local-mentor", ["mentor"]],
-    ["local-student", ["student", "stats:student"]],
-  ] as const) {
-    await atomic(db, async (tx) => {
+  assert(
+    config.fixtures && config.endpoint,
+    "Synthetic seed is DynamoDB Local only.",
+  );
+  await initializeSchema();
+  await atomic(db, async (tx) => {
+    for (const [memberId, displayName, role, code] of [
+      ["local-admin", "Casey Admin", "ADMIN", "000890"],
+      ["local-mentor", "Taylor Mentor", "MENTOR", "000789"],
+      ["local-student", "Alex Example", "STUDENT", "000123"],
+      ["local-student-two", "Jordan Sample", "STUDENT", "000456"],
+      ["local-presence-a", "Casey Preview", "STUDENT", "000567"],
+      ["local-presence-b", "Morgan Preview", "STUDENT", "000678"],
+    ] as const) {
+      const userKey = key("USER#" + memberId);
+      if (await tx.get(userKey)) continue;
       await tx.put(
-        row(`IDENTITY#${sub}`, "METADATA", {
-          googleSub: sub,
-          email: `${sub}@stmarobotics.org`,
-          enabled: true,
-          roles: [...roles],
-          gsi1pk: "IDENTITIES",
-          gsi1sk: sub,
+        row(userKey.pk, userKey.sk, {
+          memberId,
+          displayName,
+          role,
+          email: memberId + "@stmarobotics.org",
+          barcode: await assignCard(tx, memberId, code),
+          active: true,
+          gsi1pk: "USERS",
+          gsi1sk: memberId,
         }),
       );
-    });
-  }
-  const p = {
-    kind: "human" as const,
-    id: "local-admin",
-    roles: ["admin", "stats:staff"],
-  };
-  const app = new Puncher(db);
-  for (const [id, name, card, email] of [
-    [
-      "11111111-1111-4111-8111-111111111111",
-      "Alex Example",
-      "000123",
-      "alex@stmarobotics.org",
-    ],
-    [
-      "22222222-2222-4222-8222-222222222222",
-      "Jordan Sample",
-      "000456",
-      "jordan@stmarobotics.org",
-    ],
-  ])
-    await app.saveMember(
-      p,
-      {
-        displayName: name,
-        email,
-        barcode: card,
-        active: true,
-        memberKind: "student",
-      },
-      id,
-    );
-  await app.saveIdentity(p, {
-    googleSub: "local-student",
-    email: "local-student@stmarobotics.org",
-    memberId: "11111111-1111-4111-8111-111111111111",
-    roles: ["student", "stats:student"],
-    enabled: true,
-  });
-  await atomic(db, async (tx) => {
-    await tx.put(
-      row("DEVICE#33333333-3333-4333-8333-333333333333", "METADATA", {
-        deviceId: "33333333-3333-4333-8333-333333333333",
-        label: "Synthetic shop kiosk",
-        enabled: true,
-        secretHash: hash("synthetic-local-device"),
-        sessionType: "mentor-launch",
-        launchedBy: "local-mentor",
-        expiresAt: "2099-01-01T00:00:00.000Z",
-        gsi1pk: "DEVICES",
-        gsi1sk: "33333333-3333-4333-8333-333333333333",
-      }),
-    );
+    }
+    const deviceId = "33333333-3333-4333-8333-333333333333";
+    const deviceKey = key("DEVICE#" + deviceId);
+    if (!(await tx.get(deviceKey)))
+      await tx.put(
+        row(deviceKey.pk, deviceKey.sk, {
+          deviceId,
+          label: "Synthetic shop kiosk",
+          enabled: true,
+          secretHash: hash("synthetic-local-device"),
+          sessionType: "mentor-launch",
+          launchedBy: "local-mentor",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+          gsi1pk: "DEVICES",
+          gsi1sk: deviceId,
+        }),
+      );
   });
   console.log(
-    "Synthetic members: 000123, 000456. Open Start kiosk and generate an activation QR as a local mentor in a separate window. Fixture sign-in is enabled only locally.",
+    "Synthetic students: 000123 and 000456. Use a local mentor to activate the kiosk.",
   );
-} else if (command === "map-cards") {
-  const mappings = JSON.parse(readFileSync(args[0], "utf8"));
-  assert(
-    Array.isArray(mappings),
-    "Mapping file must contain an array of {memberId, barcode}.",
-  );
-  const sub = args[1];
-  const identity = await db.get(key(`IDENTITY#${sub}`));
-  assert(
-    identity?.enabled && identity.roles.includes("admin"),
-    "Supply an enabled admin subject as the second argument.",
-  );
-  const p = { kind: "human" as const, id: sub, roles: identity.roles };
-  for (const m of mappings) {
-    const member = await db.get(key(`MEMBER#${m.memberId}`));
-    assert(member, "Unknown member.");
-    await new Puncher(db).saveMember(
-      p,
-      { ...member, barcode: m.barcode },
-      m.memberId,
-    );
-  }
-  console.log("Explicit mappings saved and audited.");
-} else
+} else {
   throw new Error(
-    "Commands: schema | seed | bootstrap-admin <verifiedSub> <email> | map-cards <json-file> <adminSub>",
+    "Commands: schema | seed | bootstrap-admin <googleSub> <email>",
   );
+}

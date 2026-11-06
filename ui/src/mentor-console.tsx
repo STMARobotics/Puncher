@@ -1,6 +1,20 @@
 import React, { useEffect, useState } from "react";
 import { api } from "./api";
-import { RosterUpload } from "./roster-upload";
+import type { Role } from "../../service/model";
+const roleLabels: Record<Role, string> = {
+  STUDENT: "Student",
+  MENTOR: "Mentor",
+  ADMIN: "Admin",
+};
+type Member = {
+  memberId: string;
+  displayName: string;
+  email: string;
+  role: Role;
+  barcode: string;
+  active: boolean;
+  version: number;
+};
 
 export function rosterCsv(members: any[]) {
   const cell = (value: unknown, protectFormula = true) => {
@@ -30,17 +44,17 @@ function downloadRoster(members: any[]) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 export function MentorConsole({ administrator }: { administrator: boolean }) {
-  const [tab, setTab] = useState("students");
+  const [tab, setTab] = useState(administrator ? "members" : "kiosks");
   return (
     <>
       <div className="page-heading">
-        <h1>MANAGE MEMBERS</h1>
+        <h1>{administrator ? "MANAGE MEMBERS" : "KIOSK SESSIONS"}</h1>
       </div>
       <nav className="tabs" aria-label="Mentor tools">
         {[
-          "students",
-          "kiosks",
-          ...(administrator ? ["mentor access", "import review", "audit"] : []),
+          ...(administrator
+            ? ["members", "kiosks", "import review", "audit"]
+            : ["kiosks"]),
         ].map((t) => (
           <button
             key={t}
@@ -51,36 +65,25 @@ export function MentorConsole({ administrator }: { administrator: boolean }) {
           </button>
         ))}
       </nav>
-      {tab === "students" ? (
-        <Members administrator={administrator} />
+      {administrator && tab === "members" ? (
+        <Members />
       ) : tab === "kiosks" ? (
         <KioskSessions />
-      ) : tab === "mentor access" ? (
-        <MentorAccess />
       ) : (
         <Operations tab={tab === "audit" ? "audit" : "review"} />
       )}
     </>
   );
 }
-function Members({ administrator }: { administrator: boolean }) {
-  const empty = () => ({
-    memberId: crypto.randomUUID(),
-    displayName: "",
-    email: "",
-    memberKind: "student",
-    active: true,
-  });
-  const [members, setMembers] = useState<any[]>([]),
-    [form, setForm] = useState<any>(empty),
-    [editing, setEditing] = useState(false),
-    [busy, setBusy] = useState(false),
-    [adminInvitation, setAdminInvitation] = useState(""),
-    [error, setError] = useState(""),
-    [message, setMessage] = useState("");
+function Members() {
+  const [members, setMembers] = useState<Member[]>([]);
+  const [form, setForm] = useState<Member>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
   async function refresh() {
     try {
-      setMembers(await api("/mentor/members"));
+      setMembers(await api("/admin/members"));
     } catch (e: any) {
       setError(e.message);
     }
@@ -88,49 +91,35 @@ function Members({ administrator }: { administrator: boolean }) {
   useEffect(() => {
     void refresh();
   }, []);
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      await api(
-        "/mentor/members" + (editing ? "/" + form.memberId : ""),
-        form,
-        editing ? "PATCH" : "POST",
-      );
-      setForm(empty());
-      setEditing(false);
-      setMessage(
-        "Roster entry saved. The card code is assigned automatically.",
-      );
-      await refresh();
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function replace(m: any) {
+
+  async function update(member: Member, replacement = false) {
     if (
+      replacement &&
       !confirm(
         "Replace " +
-          m.displayName +
-          "'s card code? Their old card will stop working; attendance history is preserved.",
+          member.displayName +
+          "’s card code? Their old card will stop working.",
       )
     )
       return;
     setBusy(true);
     setError("");
-    const storageKey = "puncher-card-replacement-" + m.memberId;
-    const operationId =
-      sessionStorage.getItem(storageKey) ?? crypto.randomUUID();
-    sessionStorage.setItem(storageKey, operationId);
+    setMessage("");
+    const path = "/admin/members/" + encodeURIComponent(member.memberId);
     try {
-      await api(`/mentor/members/${m.memberId}/replace-card`, { operationId });
-      sessionStorage.removeItem(storageKey);
-      setMessage(
-        "Replacement code assigned. Export the roster for your ID-card generator.",
-      );
+      if (replacement) {
+        const storageKey = "puncher-card-replacement-" + member.memberId;
+        const operationId =
+          sessionStorage.getItem(storageKey) ?? crypto.randomUUID();
+        sessionStorage.setItem(storageKey, operationId);
+        await api(path + "/replace-card", { operationId });
+        sessionStorage.removeItem(storageKey);
+      } else {
+        const { displayName, role, active, version } = member;
+        await api(path, { displayName, role, active, version }, "PATCH");
+        setForm(undefined);
+      }
+      setMessage(replacement ? "Replacement code assigned." : "Member saved.");
       await refresh();
     } catch (e: any) {
       setError(e.message);
@@ -138,37 +127,13 @@ function Members({ administrator }: { administrator: boolean }) {
       setBusy(false);
     }
   }
-  async function grantAdministrator(member: any) {
-    const email =
-      member.email || prompt("Enter the member’s stmarobotics.org Google email.");
-    if (
-      !email ||
-      !confirm(`Grant administrator access to ${member.displayName} (${email})?`)
-    )
-      return;
-    setBusy(true);
-    setError("");
-    setAdminInvitation("");
-    try {
-      const { path } = await api(
-        `/admin/members/${encodeURIComponent(member.memberId)}/invite-admin`,
-        { email },
-      );
-      setAdminInvitation(new URL(path, location.origin).href);
-      setMessage("");
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
+
   return (
     <>
-      <RosterUpload onComplete={refresh} />
       <section className="panel">
         <div className="mentor-actions">
           <button
-            disabled={!members.some((m) => m.active && m.barcode)}
+            disabled={!members.some((member) => member.active)}
             onClick={() => downloadRoster(members)}
           >
             Export active roster CSV
@@ -183,83 +148,70 @@ function Members({ administrator }: { administrator: boolean }) {
           </p>
         )}
         {message && <p role="status">{message}</p>}
-        {adminInvitation && (
-          <label>
-            Share this administrator invitation with the member. It expires in
-            24 hours.
-            <input
-              readOnly
-              value={adminInvitation}
-              onFocus={(event) => event.currentTarget.select()}
-            />
-          </label>
-        )}
       </section>
-      <section className="panel">
-        <h2>{editing ? "EDIT ROSTER ENTRY" : "ADD ROSTER ENTRY"}</h2>
-        <form className="form-grid" onSubmit={save}>
-          <label>
-            Name
-            <input
-              required
-              maxLength={100}
-              value={form.displayName}
-              onChange={(e) =>
-                setForm({ ...form, displayName: e.target.value })
-              }
-            />
-          </label>
-          <label>
-            Email
-            <input
-              type="email"
-              value={form.email ?? ""}
-              readOnly={!!form.csvManaged}
-              onChange={(e) => setForm({ ...form, email: e.target.value })}
-            />
-          </label>
-          <label>
-            Role
-            <select
-              value={form.memberKind}
-              onChange={(e) => setForm({ ...form, memberKind: e.target.value })}
-            >
-              <option value="student">Student</option>
-              <option value="mentor">Mentor</option>
-            </select>
-          </label>
-          <label className="checkbox">
-            <input
-              type="checkbox"
-              checked={form.active}
-              onChange={(e) => setForm({ ...form, active: e.target.checked })}
-            />
-            Active for attendance
-          </label>
-          {editing && (
-            <p>
-              Card code: <strong>{form.barcode ?? "Assigned on save"}</strong>
-            </p>
-          )}
-          <button disabled={busy}>
-            {editing ? "Save entry" : "Add entry"}
-          </button>
-          {editing && (
+      {form && (
+        <section className="panel">
+          <h2>EDIT MEMBER</h2>
+          <form
+            className="inline-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void update(form);
+            }}
+          >
+            <label>
+              Name
+              <input
+                required
+                maxLength={100}
+                value={form.displayName}
+                onChange={(event) =>
+                  setForm({ ...form, displayName: event.target.value })
+                }
+              />
+            </label>
+            <label>
+              Email
+              <input readOnly value={form.email} />
+            </label>
+            <label>
+              Role
+              <select
+                value={form.role}
+                onChange={(event) =>
+                  setForm({ ...form, role: event.target.value as Role })
+                }
+              >
+                {Object.entries(roleLabels).map(([role, label]) => (
+                  <option key={role} value={role}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                checked={form.active}
+                onChange={(event) =>
+                  setForm({ ...form, active: event.target.checked })
+                }
+              />
+              Active
+            </label>
+            <button disabled={busy}>Save member</button>
             <button
               className="secondary"
               type="button"
-              onClick={() => {
-                setForm(empty());
-                setEditing(false);
-              }}
+              onClick={() => setForm(undefined)}
             >
               Cancel
             </button>
-          )}
-        </form>
-      </section>
+          </form>
+        </section>
+      )}
       <section className="panel">
-        <h2>STUDENTS AND MENTORS · {members.length}</h2>
+        <h2>MEMBERS · {members.length}</h2>
         <div className="table-wrap">
           <table>
             <thead>
@@ -273,39 +225,28 @@ function Members({ administrator }: { administrator: boolean }) {
               </tr>
             </thead>
             <tbody>
-              {members.map((m) => (
-                <tr key={m.memberId}>
-                  <td>{m.displayName}</td>
-                  <td>{m.email ?? "—"}</td>
-                  <td>{m.memberKind === "mentor" ? "Mentor" : "Student"}</td>
-                  <td>{m.barcode ?? "Unassigned"}</td>
-                  <td>{m.active ? "Active" : "Inactive"}</td>
+              {members.map((member) => (
+                <tr key={member.memberId}>
+                  <td>{member.displayName}</td>
+                  <td>{member.email}</td>
+                  <td>{roleLabels[member.role]}</td>
+                  <td>{member.barcode}</td>
+                  <td>{member.active ? "Active" : "Inactive"}</td>
                   <td>
                     <button
                       className="quiet"
-                      onClick={() => {
-                        setForm({ ...m });
-                        setEditing(true);
-                      }}
+                      disabled={busy}
+                      onClick={() => setForm(member)}
                     >
-                      Edit entry
+                      Edit member
                     </button>
                     <button
                       className="quiet"
                       disabled={busy}
-                      onClick={() => replace(m)}
+                      onClick={() => void update(member, true)}
                     >
                       Replace card code
                     </button>
-                    {administrator && m.active && (
-                      <button
-                        className="quiet"
-                        disabled={busy}
-                        onClick={() => grantAdministrator(m)}
-                      >
-                        Grant admin
-                      </button>
-                    )}
                   </td>
                 </tr>
               ))}
@@ -356,103 +297,6 @@ function KioskSessions() {
         </div>
       ))}
       {sessions.length === 0 && <p>No kiosk sessions.</p>}
-    </section>
-  );
-}
-function MentorAccess() {
-  const [requests, setRequests] = useState<any[]>([]),
-    [identities, setIdentities] = useState<any[]>([]),
-    [error, setError] = useState(""),
-    [administrator, setAdministrator] = useState(false),
-    [statsReports, setStatsReports] = useState(false);
-  async function load() {
-    try {
-      const [r, i] = await Promise.all([
-        api("/admin/mentor-requests"),
-        api("/admin/identities"),
-      ]);
-      setRequests(r);
-      setIdentities(
-        i.filter((x: any) =>
-          x.roles.some((r: string) => ["mentor", "admin"].includes(r)),
-        ),
-      );
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }
-  useEffect(() => {
-    void load();
-  }, []);
-  async function approve(request: any) {
-    try {
-      await api(`/admin/mentor-requests/${request.googleSub}/approve`, {
-        administrator,
-        statsReports,
-      });
-      await load();
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }
-  async function disable(identity: any) {
-    if (!confirm("Remove Puncher mentor access for " + identity.email + "?"))
-      return;
-    try {
-      await api("/admin/identities", {
-        ...identity,
-        roles: identity.roles.filter(
-          (r: string) => !["mentor", "admin"].includes(r),
-        ),
-      });
-      await load();
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }
-  return (
-    <section className="panel">
-      <h2>MENTOR ACCESS</h2>
-      <p>
-        Mentor permissions are assigned by a Puncher administrator. Review
-        existing pending requests here.
-      </p>
-      {error && <p role="alert">{error}</p>}
-      <label className="checkbox">
-        <input
-          type="checkbox"
-          checked={administrator}
-          onChange={(e) => setAdministrator(e.target.checked)}
-        />
-        Grant mentor administrator permissions when approving
-      </label>
-      <label className="checkbox">
-        <input
-          type="checkbox"
-          checked={statsReports}
-          onChange={(e) => setStatsReports(e.target.checked)}
-        />
-        Allow mentor reports in Stats when approving
-      </label>
-      {requests.map((r) => (
-        <div className="list-row" key={r.googleSub}>
-          <div>
-            <strong>{r.displayName}</strong>
-            <small>{r.email}</small>
-          </div>
-          <button onClick={() => approve(r)}>Approve mentor</button>
-        </div>
-      ))}
-      {requests.length === 0 && <p>No pending mentor requests.</p>}
-      <h3>APPROVED MENTORS</h3>
-      {identities.map((i) => (
-        <div className="list-row" key={i.googleSub}>
-          <span>{i.email}</span>
-          <button className="secondary" onClick={() => disable(i)}>
-            Remove mentor access
-          </button>
-        </div>
-      ))}
     </section>
   );
 }

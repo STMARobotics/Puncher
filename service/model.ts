@@ -4,18 +4,18 @@ export type Row = {
   pk: string;
   sk: string;
   v: number;
-  schemaVersion: 1;
+  schemaVersion: 1 | typeof SCHEMA_VERSION;
   [key: string]: any;
 };
 export type Key = Pick<Row, "pk" | "sk">;
-export type Principal = {
-  kind: "human" | "device";
-  id: string;
-  roles: string[];
-  memberId?: string;
-  rosterEmail?: string;
-  expiresAt?: string;
-};
+export const SCHEMA_VERSION = 2;
+export const roles = ["STUDENT", "MENTOR", "ADMIN"] as const;
+export type Role = (typeof roles)[number];
+export type Human = { kind: "human"; id: string; role: Role; barcode?: string };
+export type Principal =
+  Human | { kind: "device"; id: string; expiresAt?: string };
+export const staffsShop = (role: unknown) =>
+  role === "MENTOR" || role === "ADMIN";
 export class Fault extends Error {
   constructor(
     public status: number,
@@ -32,7 +32,7 @@ export const row = (
   pk: string,
   sk: string,
   fields: Record<string, any>,
-): Row => ({ pk, sk, v: 1, schemaVersion: 1, ...fields });
+): Row => ({ pk, sk, v: 1, schemaVersion: SCHEMA_VERSION, ...fields });
 export const hash = (s: string) => createHash("sha256").update(s).digest("hex");
 export const uid = (): string => randomUUID();
 export const ZONE = "America/Chicago";
@@ -102,17 +102,16 @@ export function text(value: unknown, label: string, max = 200): string {
   );
   return value.trim();
 }
-export function admin(p: Principal) {
+export function admin(p: Principal): asserts p is Human {
   assert(
-    p.kind === "human" && p.roles.includes("admin"),
+    p.kind === "human" && p.role === "ADMIN",
     "Administrator access required.",
     403,
   );
 }
-export function mentor(p: Principal) {
+export function mentor(p: Principal): asserts p is Human {
   assert(
-    p.kind === "human" &&
-      (p.roles.includes("admin") || p.roles.includes("mentor")),
+    p.kind === "human" && staffsShop(p.role),
     "Mentor access required.",
     403,
   );
@@ -120,7 +119,7 @@ export function mentor(p: Principal) {
 export function owns(p: Principal, e: Row) {
   mentor(p);
   assert(
-    p.roles.includes("admin") || e.mentorSub === p.id,
+    p.role === "ADMIN" || e.mentorSub === p.id,
     "This event belongs to another mentor.",
     403,
   );

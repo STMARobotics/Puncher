@@ -4,6 +4,8 @@ import { assignCard } from "./card-codes";
 import {
   type Row,
   type Principal,
+  roles,
+  staffsShop,
   key,
   row,
   uid,
@@ -24,7 +26,6 @@ import {
   eligible,
 } from "./model";
 const shopClockKey = (day: string) => key("SHOP_CLOCK#" + day);
-const adminInviteKey = (memberId: string) => key("ADMIN_INVITE#" + memberId);
 
 function staffedMillis(shop: Row | undefined, now: number) {
   return (
@@ -58,51 +59,32 @@ export class Puncher {
     );
   }
   async livePrincipal(tx: Tx, p: Principal) {
-    const r = await tx.get(
-      key(`${p.kind === "device" ? "DEVICE" : "IDENTITY"}#${p.id}`),
-    );
+    if (p.kind === "human") {
+      const user = await tx.get(key("USER#" + p.id));
+      assert(
+        user?.active && user.role === p.role,
+        "Permissions changed or access was disabled. Sign in again.",
+        403,
+      );
+      return user;
+    }
+    const device = await tx.get(key("DEVICE#" + p.id));
     assert(
-      r &&
-        (p.kind === "device"
-          ? r.enabled &&
-            kioskExpiry(r.launchedAt, r.expiresAt) > this.clock().toISOString()
-          : r.enabled),
+      device?.enabled &&
+        device.sessionType === "mentor-launch" &&
+        device.launchedBy &&
+        kioskExpiry(device.launchedAt, device.expiresAt) >
+          this.clock().toISOString(),
       "Access disabled. Ask an administrator for setup.",
       403,
     );
-    if (p.kind === "human") {
-      assert(
-        JSON.stringify(r.roles) === JSON.stringify(p.roles),
-        "Permissions changed. Sign in again.",
-        403,
-      );
-      if (r.memberId) {
-        const member = await tx.get(key(`MEMBER#${r.memberId}`));
-        assert(member?.active, "Attendance account is inactive.", 403);
-      }
-    } else {
-      assert(
-        r.sessionType === "mentor-launch" && r.launchedBy,
-        "A mentor must launch this kiosk.",
-        403,
-      );
-      const owner = await tx.get(key("IDENTITY#" + r.launchedBy));
-      assert(
-        owner?.enabled &&
-          owner.roles?.some((role: string) =>
-            ["mentor", "admin"].includes(role),
-          ),
-        "The mentor who launched this kiosk no longer has access.",
-        403,
-      );
-      if (owner.memberId)
-        assert(
-          (await tx.get(key("MEMBER#" + owner.memberId)))?.active,
-          "The mentor account is inactive.",
-          403,
-        );
-    }
-    return r;
+    const owner = await tx.get(key("USER#" + device.launchedBy));
+    assert(
+      owner?.active && staffsShop(owner.role),
+      "The mentor who launched this kiosk no longer has access.",
+      403,
+    );
+    return device;
   }
   async rate(tx: Tx, p: Principal) {
     const minute = this.clock().toISOString().slice(0, 16);
@@ -118,13 +100,13 @@ export class Puncher {
   }
   async cardMember(tx: Tx, card: string) {
     const claim = await tx.get(key("CARD#" + barcode(card)));
-    assert(claim, "Card is not assigned. Ask a mentor.", 404);
-    return tx.get(key("MEMBER#" + claim.memberId));
+    assert(claim && !claim.retired, "Card is not assigned. Ask a mentor.", 404);
+    return tx.get(key("USER#" + claim.memberId));
   }
   async memberForCard(tx: Tx, card: string) {
     const m = await this.cardMember(tx, card);
     assert(
-      m?.active && m.memberKind === "student",
+      m?.active && m.role === "STUDENT",
       "This card is inactive or unavailable.",
       403,
     );
@@ -149,7 +131,7 @@ export class Puncher {
       );
       await this.audit(
         tx,
-        { id: "midnight-policy", kind: "device", roles: [] },
+        { id: "midnight-policy", kind: "device" },
         "shop.forfeit",
         session.sessionId,
         { memberId: current.memberId, shopDate: session.shopDate },
@@ -239,7 +221,7 @@ export class Puncher {
     return { ...current, sessionId, sessionSk: sk, cutoffAt: c, shopDate: day };
   }
   async currentVisit(tx: Tx, memberId: string, now: string) {
-    const k = key("MEMBER#" + memberId, "CURRENT");
+    const k = key("ATTENDANCE#" + memberId, "CURRENT");
     const before =
       (await tx.get(k)) ?? row(k.pk, k.sk, { memberId, sessionId: null });
     return {
@@ -366,7 +348,7 @@ export class Puncher {
         };
         cur = { ...cur, sessionId: null, sessionSk: null };
       } else {
-        const isMentor = m.memberKind === "mentor";
+        const isMentor = staffsShop(m.role);
         cur = await this.startVisit(tx, cur, day, now, isMentor, openMillis);
         if (isMentor) await this.changeMentorCount(tx, day, shop, timestamp, 1);
         result = {
@@ -415,7 +397,7 @@ export class Puncher {
         404,
       );
       assert(op.memberId, "Delivery target not found.", 409);
-      const c = await tx.get(key(`MEMBER#${op.memberId}`, "CURRENT"));
+      const c = await tx.get(key(`ATTENDANCE#${op.memberId}`, "CURRENT"));
       if (c?.warning?.id === warningId) await tx.put({ ...c, warning: null });
       await this.audit(tx, p, "warning.delivered", op.memberId, {
         operationId: id,
@@ -432,7 +414,7 @@ export class Puncher {
       for (const r of page.items) {
         if (r.cutoffAt > this.clock().toISOString()) continue;
         await atomic(this.store, async (tx) => {
-          const c = await tx.get(key(`MEMBER#${r.memberId}`, "CURRENT"));
+          const c = await tx.get(key(`ATTENDANCE#${r.memberId}`, "CURRENT"));
           if (
             c &&
             c.sessionId === r.sessionId &&
@@ -447,74 +429,42 @@ export class Puncher {
     } while (cursor);
     return { expired };
   }
-  async saveMember(p: Principal, input: any, id = uid()) {
-    mentor(p);
+  async updateMember(p: Principal, id: string, input: Record<string, unknown>) {
+    admin(p);
     const displayName = text(input.displayName, "Name", 100);
-    assert(
-      ["student", "mentor"].includes(input.memberKind),
-      "Invalid attendance role.",
-    );
-    assert(typeof input.active === "boolean", "Active is required.");
-    const requestedCard =
-      input.barcode === "" || input.barcode == null
-        ? undefined
-        : barcode(input.barcode);
+    const role = roles.find((value) => value === input.role);
+    assert(role, "Choose Student, Mentor, or Admin.");
+    const active = input.active;
+    assert(typeof active === "boolean", "Active is required.");
     return atomic(this.store, async (tx) => {
       await this.livePrincipal(tx, p);
-      const k = key(`MEMBER#${id}`);
-      const previous = await tx.get(k);
+      const user = await tx.get(key("USER#" + id));
+      assert(user, "Member not found.", 404);
       assert(
-        !previous?.csvEmail ||
-          input.email === undefined ||
-          (typeof input.email === "string" &&
-            input.email.trim().toLowerCase() === previous.csvEmail),
-        "This roster email is linked to Google sign-in. Ask an administrator to review the account.",
+        user.v === input.version,
+        "This member changed. Refresh and try again.",
         409,
       );
-      const card = await assignCard(tx, id, requestedCard ?? previous?.barcode);
-      if (card !== previous?.barcode) {
-        if (previous?.barcode) {
-          await assignCard(tx, id, previous.barcode);
-          await tx.del(key(`CARD#${previous.barcode}`));
-        }
-        if (card) {
-          const claim = await tx.get(key(`CARD#${card}`));
-          assert(
-            !claim || claim.memberId === id,
-            "Card is already assigned.",
-            409,
-          );
-          await tx.put(row(`CARD#${card}`, "METADATA", { memberId: id }));
-        }
+      assert(
+        id !== p.id || (active && role === "ADMIN"),
+        "You cannot remove your own administrator access.",
+        403,
+      );
+      if (user.active !== active || user.role !== role) {
+        const current = await tx.get(key("ATTENDANCE#" + id, "CURRENT"));
+        assert(
+          !current?.sessionId || current.cutoffAt <= this.clock().toISOString(),
+          "This member must clock out before you change their access.",
+          409,
+        );
       }
-      const m = row(k.pk, k.sk, {
-        memberId: id,
-        displayName,
-        memberKind: input.memberKind,
-        active: input.active,
-        manuallyDisabled:
-          previous && previous.active === input.active
-            ? !!previous.manuallyDisabled
-            : !input.active,
-        email: previous?.csvEmail
-          ? previous.email
-          : typeof input.email === "string"
-            ? input.email.trim().slice(0, 254)
-            : previous?.email,
-        barcode: card,
-        gsi1pk: "MEMBERS",
-        gsi1sk: id,
-      });
-      await tx.put({ ...previous, ...m });
-      await this.audit(tx, p, "member.saved", id, {
-        cardChanged: card !== previous?.barcode,
-        active: input.active,
-      });
-      return { memberId: id, barcode: card };
+      await tx.put({ ...user, displayName, role, active });
+      await this.audit(tx, p, "member.saved", id, { role, active });
+      return { saved: true };
     });
   }
   async replaceCard(p: Principal, id: string, operationId: string) {
-    mentor(p);
+    admin(p);
     assert(
       typeof operationId === "string" && /^[a-f0-9-]{36}$/i.test(operationId),
       "A replacement operation ID is required.",
@@ -531,13 +481,16 @@ export class Puncher {
         );
         return existing.result;
       }
-      const member = await tx.get(key("MEMBER#" + id));
+      const member = await tx.get(key("USER#" + id));
       assert(member, "Roster entry not found.", 404);
-      if (member.barcode) {
-        await assignCard(tx, id, member.barcode);
-        await tx.del(key("CARD#" + member.barcode));
-      }
+      const previous = await tx.get(key("CARD#" + member.barcode));
+      assert(
+        previous?.memberId === id && !previous.retired,
+        "Card assignment is unavailable.",
+        409,
+      );
       const card = await assignCard(tx, id);
+      await tx.put({ ...previous, retired: true });
       await tx.put({ ...member, barcode: card });
       await tx.put(
         row(opKey.pk, opKey.sk, { memberId: id, result: { barcode: card } }),
@@ -546,352 +499,41 @@ export class Puncher {
       return { barcode: card };
     });
   }
-  async saveIdentity(p: Principal, input: any) {
-    admin(p);
-    const sub = text(input.googleSub, "Verified Google subject");
-    const email = text(input.email, "Email").toLowerCase();
-    assert(
-      /^[^@]+@stmarobotics\.org$/.test(email),
-      "Use a stmarobotics.org email.",
-    );
-    assert(
-      Array.isArray(input.roles) &&
-        input.roles.every((r: any) =>
-          [
-            "student",
-            "mentor",
-            "admin",
-            "stats:student",
-            "stats:staff",
-          ].includes(r),
-        ),
-      "Invalid permissions.",
-    );
-    assert(typeof input.enabled === "boolean", "Enabled flag required.");
-    assert(
-      sub !== p.id || (input.enabled && input.roles.includes("admin")),
-      "You cannot remove your own administrator access.",
-      403,
-    );
-    return atomic(this.store, async (tx) => {
-      await this.livePrincipal(tx, p);
-      const k = key(`IDENTITY#${sub}`);
-      const before = await tx.get(k);
-      if (input.memberId) {
-        const member = await tx.get(key(`MEMBER#${input.memberId}`));
-        assert(member, "Roster entry not found.");
-        assert(
-          !member.directoryUserId || member.directoryUserId === sub,
-          "Roster entry is linked to a different Google Directory account.",
-          409,
-        );
-        const claim = await tx.get(key(`BINDING#${input.memberId}`));
-        assert(
-          !claim || claim.googleSub === sub,
-          "Roster entry is already linked to another identity.",
-          409,
-        );
-        await tx.put(
-          row(`BINDING#${input.memberId}`, "METADATA", { googleSub: sub }),
-        );
-      }
-      if (before?.memberId && before.memberId !== input.memberId)
-        await tx.del(key(`BINDING#${before.memberId}`));
-      await tx.put(
-        row(k.pk, k.sk, {
-          googleSub: sub,
-          memberId: input.memberId || undefined,
-          displayName: before?.displayName,
-          email,
-          enabled: input.enabled,
-          roles: input.roles,
-          gsi1pk: "IDENTITIES",
-          gsi1sk: sub,
-        }),
-      );
-      await this.audit(tx, p, "identity.saved", sub);
-      return { saved: true };
-    });
-  }
-  async createDevice(p: Principal, label: string) {
-    admin(p);
-    return this.launchKiosk(p, undefined, label);
-  }
-  async inviteAdministrator(p: Principal, memberId: string, value: unknown) {
-    admin(p);
-    const email = text(value, "Google email", 254).toLowerCase();
-    assert(
-      /^[^@\s]+@stmarobotics\.org$/.test(email),
-      "Use a stmarobotics.org email.",
-    );
-    const token = randomBytes(32).toString("base64url");
-    return atomic(this.store, async (tx) => {
-      await this.livePrincipal(tx, p);
-      const member = await tx.get(key("MEMBER#" + memberId));
-      assert(member?.active, "Choose an active roster entry.", 409);
-      const rosterEmail = member.email?.trim().toLowerCase() || undefined;
-      assert(
-        !rosterEmail || rosterEmail === email,
-        "Use the Google email on this roster entry.",
-        409,
-      );
-      const inviteKey = adminInviteKey(memberId);
-      await tx.put(
-        row(inviteKey.pk, inviteKey.sk, {
-          email,
-          rosterEmail,
-          tokenHash: hash(token),
-          invitedBy: p.id,
-          ttl: Math.floor(this.clock().getTime() / 1000) + 24 * 60 * 60,
-        }),
-      );
-      await this.audit(tx, p, "identity.admin_invited", memberId);
-      const query = new URLSearchParams({ member: memberId, invite: token });
-      return { path: "/api/auth/login?" + query };
-    });
-  }
-  async acceptAdministratorInvite(
-    memberId: string,
-    tokenHash: string,
-    google: { sub: string; email: string },
-  ) {
-    return atomic(this.store, async (tx) => {
-      const inviteKey = adminInviteKey(memberId);
-      const invite = await tx.get(inviteKey);
-      assert(
-        invite?.tokenHash === tokenHash &&
-          invite.ttl > Math.floor(this.clock().getTime() / 1000),
-        "This administrator invitation is invalid or expired.",
-        403,
-      );
-      const email = google.email.toLowerCase();
-      assert(
-        email === invite.email,
-        "Sign in with the invited Google account.",
-        403,
-      );
-      const grantor = await tx.get(key("IDENTITY#" + invite.invitedBy));
-      const grantorMember = grantor?.memberId
-        ? await tx.get(key("MEMBER#" + grantor.memberId))
-        : undefined;
-      assert(
-        grantor?.enabled &&
-          grantor.roles?.includes("admin") &&
-          (!grantor.memberId || grantorMember?.active),
-        "This administrator invitation is no longer valid.",
-        403,
-      );
-      const member = await tx.get(key("MEMBER#" + memberId));
-      assert(
-        member?.active &&
-          (member.email?.trim().toLowerCase() || undefined) === invite.rosterEmail,
-        "The roster entry changed. Ask an administrator for a new invitation.",
-        409,
-      );
-      const identityKey = key("IDENTITY#" + google.sub);
-      const bindingKey = key("BINDING#" + memberId);
-      const [identity, binding, login, directory, rosterClaim] = await Promise.all([
-        tx.get(identityKey),
-        tx.get(bindingKey),
-        tx.get(key("ROSTER_LOGIN#" + memberId)),
-        tx.get(key("DIRECTORY#" + google.sub)),
-        tx.get(key("ROSTER_EMAIL#" + hash(email))),
-      ]);
-      const otherRosterLogin =
-        !identity?.memberId &&
-        rosterClaim?.memberId &&
-        rosterClaim.memberId !== memberId
-          ? await tx.get(key("ROSTER_LOGIN#" + rosterClaim.memberId))
-          : undefined;
-      assert(
-        !identity || identity.enabled,
-        "Your Puncher access is disabled.",
-        403,
-      );
-      assert(
-        (!identity?.memberId || identity.memberId === memberId) &&
-          (!directory || directory.memberId === memberId) &&
-          otherRosterLogin?.sub !== google.sub &&
-          (!binding || binding.googleSub === google.sub) &&
-          (!login || login.sub === google.sub) &&
-          (!member.directoryUserId || member.directoryUserId === google.sub),
-        "This Google account and roster entry have conflicting links. Ask an administrator to review them.",
-        409,
-      );
-      await tx.put(row(bindingKey.pk, bindingKey.sk, { googleSub: google.sub }));
-      await tx.put({
-        ...identity,
-        ...row(identityKey.pk, identityKey.sk, {
-          googleSub: google.sub,
-          email,
-          displayName: identity?.displayName ?? member.displayName,
-          memberId,
-          enabled: true,
-          roles: [...new Set([...(identity?.roles ?? []), "admin"])],
-          gsi1pk: "IDENTITIES",
-          gsi1sk: google.sub,
-        }),
-      });
-      await tx.del(inviteKey);
-      await this.audit(
-        tx,
-        { kind: "human", id: invite.invitedBy, roles: ["admin"] },
-        "identity.admin_granted",
-        google.sub,
-        { memberId },
-      );
-    });
-  }
-  async approveMentor(
-    p: Principal,
-    sub: string,
-    administrator: boolean,
-    statsReports: boolean,
-  ) {
-    admin(p);
-    return atomic(this.store, async (tx) => {
-      await this.livePrincipal(tx, p);
-      const requestKey = key("MENTOR_REQUEST#" + sub),
-        request = await tx.get(requestKey);
-      assert(
-        request && request.ttl > this.clock().getTime() / 1000,
-        "Mentor request expired or not found.",
-        404,
-      );
-      const k = key("IDENTITY#" + sub),
-        before = await tx.get(k);
-      // Preserve Stats roles and the existing member binding when adding Puncher access.
-      const roles = [
-        ...new Set([
-          ...(before?.roles ?? []),
-          "mentor",
-          ...(administrator ? ["admin"] : []),
-          ...(statsReports ? ["stats:staff"] : []),
-        ]),
-      ];
-      await tx.put({
-        ...before,
-        ...row(k.pk, k.sk, {
-          googleSub: sub,
-          memberId: before?.memberId,
-          email: request.email,
-          displayName: request.displayName ?? before?.displayName,
-          enabled: true,
-          roles,
-          gsi1pk: "IDENTITIES",
-          gsi1sk: sub,
-        }),
-      });
-      await tx.del(requestKey);
-      await this.audit(tx, p, "mentor.approved", sub, {
-        administrator,
-        statsReports,
-      });
-      return { approved: true };
-    });
-  }
-  async mentorAttendanceMember(tx: Tx, p: Principal, identity: Row) {
-    let memberId = identity.memberId as string | undefined;
-    if (!memberId) {
-      const directory = await tx.get(key("DIRECTORY#" + p.id));
-      const email = identity.email?.trim().toLowerCase();
-      const roster =
-        email && (await tx.get(key("ROSTER_EMAIL#" + hash(email))));
-      memberId =
-        directory?.memberId ??
-        (roster && !roster.retired ? roster.memberId : undefined);
-    }
-    memberId ??= uid();
-    const memberKey = key("MEMBER#" + memberId);
-    const member = await tx.get(memberKey);
-    const bindingKey = key("BINDING#" + memberId);
-    const binding = await tx.get(bindingKey);
-    const login = await tx.get(key("ROSTER_LOGIN#" + memberId));
-    assert(
-      (!binding || binding.googleSub === p.id) &&
-        (!login || login.sub === p.id) &&
-        (!member?.directoryUserId || member.directoryUserId === p.id),
-      "This attendance record is linked to another account. Ask an administrator to review it.",
-      409,
-    );
-    assert(
-      !member || member.active,
-      "The mentor attendance account is inactive.",
-      403,
-    );
-    const card = await assignCard(tx, memberId, member?.barcode);
-    const profileName = identity.displayName as string | undefined;
-    const accountName = identity.email?.split("@")[0].replace(/[._-]+/g, " ");
-    const displayName =
-      member?.displayName ??
-      (profileName && !profileName.includes("@")
-        ? profileName
-        : accountName || "Mentor");
-    if (!member || member.memberKind !== "mentor" || member.barcode !== card)
-      await tx.put({
-        ...member,
-        ...row(memberKey.pk, memberKey.sk, {
-          memberId,
-          displayName,
-          memberKind: "mentor",
-          active: true,
-          barcode: card,
-          gsi1pk: "MEMBERS",
-          gsi1sk: memberId,
-        }),
-      });
-    if (!binding)
-      await tx.put(row(bindingKey.pk, bindingKey.sk, { googleSub: p.id }));
-    if (identity.memberId !== memberId) {
-      await tx.put({ ...identity, memberId });
-      await this.audit(tx, p, "member.mentor_linked", memberId);
-    }
-    return { memberId, barcode: card, displayName };
-  }
-  async clockInLaunchingMentor(tx: Tx, p: Principal, identity: Row) {
-    const { memberId, displayName } = await this.mentorAttendanceMember(
-      tx,
-      p,
-      identity,
-    );
+  async clockInLaunchingMentor(tx: Tx, p: Principal, user: Row) {
+    const { memberId, displayName } = user;
     const { day, shop, timestamp, now } = await this.readShopClock(tx);
     const { current } = await this.currentVisit(tx, memberId, now);
     const active = current.sessionId
       ? await tx.get(key(current.pk, current.sessionSk))
       : undefined;
     assert(
-      !current.sessionId || active?.status === "active",
+      !current.sessionId || (active?.status === "active" && active.isMentor),
       "Attendance state needs administrator attention.",
       409,
     );
-    if (active?.isMentor) return now;
+    if (active) return now;
     await this.changeMentorCount(tx, day, shop, timestamp, 1);
-    if (active) {
-      // An already active visit keeps the original start and earned time.
-      await tx.put({ ...active, isMentor: true });
-    } else {
-      const visit = await this.startVisit(
-        tx,
-        current,
-        day,
-        now,
-        true,
-        staffedMillis(shop, timestamp),
-      );
-      await tx.put({
-        ...visit,
-        lastScanAt: null,
-        lastResult: {
-          state: "in",
-          displayName,
-          startedAt: now,
-          warning: current.warning,
-        },
-      });
-      await this.audit(tx, p, "shop.in", memberId, {
-        source: "kiosk_activation",
-      });
-    }
+    const visit = await this.startVisit(
+      tx,
+      current,
+      day,
+      now,
+      true,
+      staffedMillis(shop, timestamp),
+    );
+    await tx.put({
+      ...visit,
+      lastScanAt: null,
+      lastResult: {
+        state: "in",
+        displayName,
+        startedAt: now,
+        warning: current.warning,
+      },
+    });
+    await this.audit(tx, p, "shop.in", memberId, {
+      source: "kiosk_activation",
+    });
     return now;
   }
   async issueKioskActivation(p: Principal) {
@@ -899,8 +541,7 @@ export class Puncher {
     const code = "PUNCHER-" + randomBytes(24).toString("hex").toUpperCase();
     const expires = new Date(this.clock().getTime() + 2 * 60_000);
     return atomic(this.store, async (tx) => {
-      const identity = await this.livePrincipal(tx, p);
-      const { barcode } = await this.mentorAttendanceMember(tx, p, identity);
+      const { barcode } = await this.livePrincipal(tx, p);
       await tx.put(
         row("KIOSK_ACTIVATION#" + hash(code), "METADATA", {
           mentorId: p.id,
@@ -927,11 +568,14 @@ export class Puncher {
       "This code expired or was already used. Ask a mentor for a new one.",
       401,
     );
-    const identity = await this.store.get(
-      key("IDENTITY#" + activation.mentorId),
+    const identity = await this.store.get(key("USER#" + activation.mentorId));
+    assert(
+      identity?.active && staffsShop(identity.role),
+      "The mentor who issued this code no longer has access.",
+      403,
     );
     return this.launchKiosk(
-      { kind: "human", id: activation.mentorId, roles: identity?.roles ?? [] },
+      { kind: "human", id: activation.mentorId, role: identity.role },
       presented,
       "Shop kiosk",
       browserSession,
@@ -1016,7 +660,7 @@ export class Puncher {
       const d = await tx.get(key(`DEVICE#${id}`));
       assert(d, "Device not found.", 404);
       assert(
-        p.roles.includes("admin") || d.launchedBy === p.id,
+        (p.kind === "human" && p.role === "ADMIN") || d.launchedBy === p.id,
         "This kiosk belongs to a different mentor.",
         403,
       );
@@ -1087,7 +731,7 @@ export class Puncher {
       const awardId = uid(),
         recordedAt = this.clock().toISOString(),
         creditSk = `VOLUNTEER#${e.eventDate}#${awardId}`;
-      const c = row(`MEMBER#${m.memberId}`, creditSk, {
+      const c = row("ATTENDANCE#" + m.memberId, creditSk, {
         awardId,
         memberId: m.memberId,
         eventId,
@@ -1138,7 +782,7 @@ export class Puncher {
       owns(p, e);
       const c = await tx.get(key(e.pk, `PARTICIPANT#${memberId}`));
       assert(c, "Participant not found.", 404);
-      const award = await tx.get(key(`MEMBER#${memberId}`, c.creditSk));
+      const award = await tx.get(key("ATTENDANCE#" + memberId, c.creditSk));
       assert(award, "Award not found.", 409);
       await tx.put({
         ...award,
@@ -1208,10 +852,12 @@ export class Puncher {
   }
   async roster(p: Principal) {
     admin(p);
-    const ms = await all(this.store, "MEMBERS", { index: "GSI1" });
+    const ms = await all(this.store, "USERS", { index: "GSI1" });
     const result = [];
     for (const m of ms) {
-      const current = await this.store.get(key(m.pk, "CURRENT"));
+      const current = await this.store.get(
+        key("ATTENDANCE#" + m.memberId, "CURRENT"),
+      );
       if (current?.sessionId && current.cutoffAt > this.clock().toISOString())
         result.push({
           memberId: m.memberId,
@@ -1239,7 +885,7 @@ export class Puncher {
         active.slice(i, i + 4).map(async (entry) => {
           if (entry.cutoffAt <= this.clock().toISOString()) return undefined;
           const current = await this.store.get(
-            key(`MEMBER#${entry.memberId}`, "CURRENT"),
+            key(`ATTENDANCE#${entry.memberId}`, "CURRENT"),
           );
           if (
             !current?.sessionId ||
@@ -1248,8 +894,10 @@ export class Puncher {
           )
             return undefined;
           const [member, session] = await Promise.all([
-            this.store.get(key(`MEMBER#${entry.memberId}`)),
-            this.store.get(key(`MEMBER#${entry.memberId}`, current.sessionSk)),
+            this.store.get(key(`USER#${entry.memberId}`)),
+            this.store.get(
+              key(`ATTENDANCE#${entry.memberId}`, current.sessionSk),
+            ),
           ]);
           if (
             !member ||
