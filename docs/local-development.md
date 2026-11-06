@@ -31,7 +31,7 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-CDK validation values synthesize only; never deploy validation output. Browser tests require the seeded local table and start/stop their own API/UI servers. `npm run test:db` creates randomly named local-only tables and removes only those tables. Domain clocks are injectable. Screenshots and traces are under ignored work/ and test-results/.
+CDK validation values synthesize only; never deploy validation output. Browser tests require the seeded local table and start/stop their own API/UI servers. The browser-test API server forces `APP_ENV=local` and `LOCAL_AUTH_FIXTURES=true` so a local Google-auth setting in `.env` does not disable synthetic test accounts; the local DynamoDB endpoint and table still come from `.env` (or the CI environment). `npm run test:db` creates randomly named local-only tables and removes only those tables. Domain clocks are injectable. Screenshots and traces are under ignored work/ and test-results/.
 
 For real local Google sign-in, set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` for a Google OAuth web client with `http://localhost:5173/api/auth/callback` as an authorized redirect URI; set `LOCAL_AUTH_FIXTURES=false`. Use the callback origin `http://localhost:5173`, not the API's listening port. Provision its verified subject with the operational command. Production and local authentication call the same verification and mapping code. The CDK configuration deploys only the production environment; local development and CI use DynamoDB Local and must not point at the production table.
 

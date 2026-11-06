@@ -45,7 +45,7 @@ export default function PassCode({
       >
         {code}
       </button>
-      <p role="status">{feedback || "Tap the barcode to copy your ID."}</p>
+      <p role="status">{feedback}</p>
     </div>
   );
 }

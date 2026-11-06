@@ -93,10 +93,9 @@ test("a mentor phone activates an anonymous kiosk and a member phone clocks atte
 
     await member.goto("/");
     await member.getByRole("button", { name: "Local student" }).click();
-    // Comment out for now, only visible for admin during test
-    // await expect(
-    //   member.getByRole("link", { name: "Add to Google Wallet" }),
-    // ).toHaveAttribute("href", "/api/wallet/save");
+    await expect(
+      member.getByRole("link", { name: "Add to Google Wallet" }),
+    ).toHaveAttribute("href", "/api/wallet/save");
     const code = await readCode(
       member.getByRole("img", { name: "Your attendance barcode" }),
       BarcodeFormat.CODE_128,

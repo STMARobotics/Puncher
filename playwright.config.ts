@@ -9,6 +9,10 @@ export default defineConfig({
     {
       command: "npm run dev:api",
       url: "http://127.0.0.1:3000/api/health",
+      env: {
+        APP_ENV: "local",
+        LOCAL_AUTH_FIXTURES: "true",
+      },
       reuseExistingServer: !process.env.CI,
     },
     {

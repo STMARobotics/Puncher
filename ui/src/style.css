@@ -193,6 +193,26 @@ small {
   padding: 12px 20px;
   font-weight: 700;
 }
+.google-signin-button {
+  display: inline-block;
+  line-height: 0;
+}
+.google-signin-button img {
+  display: block;
+  width: 180px;
+  height: 40px;
+}
+.signin-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.signin-actions .google-login {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+}
 .signin > p:not(.eyebrow) {
   color: var(--muted);
   font-size: 15px;

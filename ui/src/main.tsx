@@ -190,16 +190,23 @@ function App() {
           <section className="signin">
             <h1>SIGN IN</h1>
             <p>Sign in with your stmarobotics.org Google account.</p>
-            {config.googleClientId ? (
-              <a className="google-login" href="/api/auth/login">
-                Continue with Google
+            <div className="signin-actions">
+              {config.googleClientId ? (
+                <a className="google-signin-button" href="/api/auth/login">
+                  <img
+                    src="/google-signin-dark.png"
+                    alt="Continue with Google"
+                    width="180"
+                    height="40"
+                  />
+                </a>
+              ) : (
+                <p className="muted">Google sign-in is not configured.</p>
+              )}
+              <a className="google-login" href="/kiosk">
+                Start kiosk
               </a>
-            ) : (
-              <p className="muted">Google sign-in is not configured.</p>
-            )}
-            <a className="google-login" href="/kiosk">
-              Start kiosk
-            </a>
+            </div>
             {config.localFixtures && (
               <div className="fixture-buttons">
                 <button onClick={() => signIn("local-mentor")}>
@@ -228,7 +235,7 @@ function App() {
                 />
               </React.Suspense>
             )}
-            {person.barcode && config.walletEnabled && isAdmin && (
+            {person.barcode && config.walletEnabled && (
               <p>
                 <a
                   className="google-login"
@@ -239,7 +246,10 @@ function App() {
                     void addToWallet();
                   }}
                 >
-                  Add to Google Wallet
+                  <img
+                    src="/enUS_add_to_google_wallet_wallet-button.svg"
+                    alt="Add to Google Wallet"
+                  />
                 </a>
               </p>
             )}
@@ -271,6 +281,7 @@ function App() {
                     label="Your attendance barcode"
                   />
                 </React.Suspense>
+                <p>Scan this barcode at the kiosk to clock in or out.</p>
                 {config.walletEnabled && (
                   <p>
                     <a
@@ -282,11 +293,13 @@ function App() {
                         void addToWallet();
                       }}
                     >
-                      Add to Google Wallet
+                      <img
+                        src="/enUS_add_to_google_wallet_wallet-button.svg"
+                        alt="Add to Google Wallet"
+                      />
                     </a>
                   </p>
                 )}
-                <p>Scan this barcode at the kiosk to clock in or out.</p>
               </details>
             )}
             {foreignPending && (
