@@ -80,7 +80,7 @@ export function signWalletPass(
   assert(/^[0-9]{6}$/.test(barcode), "Invalid attendance barcode.", 403);
   const issuerId = classId.split(".", 1)[0];
   const objectSuffix =
-    "member-" + createHash("sha256").update(memberId).digest("hex");
+    "m-" + createHash("sha256").update(memberId).digest("hex").slice(0, 16);;
   const header = base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
   const payload = base64url(
     JSON.stringify({
@@ -88,7 +88,7 @@ export function signWalletPass(
       aud: "google",
       typ: "savetowallet",
       iat: Math.floor(now.getTime() / 1000),
-      origins: [new URL(origin).hostname],
+      origins: [new URL(origin).origin],
       payload: {
         genericObjects: [
           {

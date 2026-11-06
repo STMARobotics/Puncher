@@ -24,6 +24,7 @@
     "db:init": "node --env-file-if-exists=.env --import tsx scripts/local-db.ts",
     "seed": "node --env-file-if-exists=.env --import tsx scripts/provision.ts seed",
     "provision": "node --env-file-if-exists=.env --import tsx scripts/provision.ts",
+    "wallet:create-class": "node --env-file-if-exists=.env --import tsx scripts/create-google-class.ts",
     "cdk:synth": "npm run synth --workspace=cdk",
     "cdk:diff": "npm exec --workspace=cdk -- cdk diff",
     "cdk:deploy": "npm run deploy --workspace=cdk -- --all",

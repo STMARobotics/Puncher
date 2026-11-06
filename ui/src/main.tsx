@@ -130,7 +130,7 @@ function App() {
   async function addToWallet() {
     try {
       const pass = await api("/wallet/save");
-      window.location.assign(pass.url);
+      window.open(pass.url, "_blank", "noopener,noreferrer");
     } catch (e: any) {
       setError(e.message);
     }
