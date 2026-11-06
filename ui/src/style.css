@@ -707,41 +707,15 @@ td small {
   padding: 0;
 }
 .presence-card {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   padding: 3px 6px;
   border: 1px solid #292d32;
   border-radius: 6px;
   background: linear-gradient(145deg, #151719, #101113);
   min-width: 0;
-}
-.presence-avatar {
-  display: grid;
-  place-items: center;
-  flex: 0 0 21px;
-  height: 21px;
-  border: 1px solid #34404d;
-  border-radius: 50%;
-  color: #b5d8ff;
-  background: #121a23;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-}
-.presence-name {
   font-size: 13px;
   font-weight: 600;
   line-height: 1.25;
   overflow-wrap: anywhere;
-}
-.presence-indicator {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 6px;
-  border-radius: 50%;
-  background: #75d59b;
-  margin-left: auto;
 }
 .presence-empty {
   margin: 0;

@@ -27,6 +27,26 @@ import {
 } from "./model";
 const shopClockKey = (day: string) => key("SHOP_CLOCK#" + day);
 
+function kioskDisplayName(email: unknown, storedName: unknown): string {
+  const schoolAddress =
+    typeof email === "string"
+      ? /^([^@.\s]+)\.([^@.\s]+)@stmarobotics\.org$/i.exec(email.trim())
+      : null;
+  if (schoolAddress) {
+    return schoolAddress
+      .slice(1)
+      .map((part) =>
+        part
+          .toLowerCase()
+          .replace(/(^|[-'’])\p{L}/gu, (letter) => letter.toUpperCase()),
+      )
+      .join(" ");
+  }
+  return typeof storedName === "string" && !storedName.includes("@")
+    ? storedName.trim()
+    : "";
+}
+
 function staffedMillis(shop: Row | undefined, now: number) {
   return (
     (shop?.staffedMillis ?? 0) +
@@ -909,7 +929,7 @@ export class Puncher {
             return undefined;
           return {
             memberId: member.memberId,
-            displayName: member.displayName as string,
+            displayName: kioskDisplayName(member.email, member.displayName),
             cutoffAt: session.cutoffAt as string,
             isMentor: session.isMentor === true,
           };
