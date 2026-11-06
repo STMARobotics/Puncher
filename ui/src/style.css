@@ -193,6 +193,13 @@ small {
   padding: 12px 20px;
   font-weight: 700;
 }
+.google-wallet-button {
+  display: inline-block;
+  line-height: 0;
+}
+.google-wallet-button img {
+  display: block;
+}
 .google-signin-button {
   display: inline-block;
   line-height: 0;

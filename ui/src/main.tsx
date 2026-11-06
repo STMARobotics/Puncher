@@ -239,7 +239,7 @@ function App() {
             {person.barcode && config.walletEnabled && (
               <p>
                 <a
-                  className="google-login"
+                  className="google-wallet-button"
                   href="/api/wallet/save"
                   referrerPolicy="no-referrer"
                   onClick={(event) => {
@@ -283,7 +283,7 @@ function App() {
                 {config.walletEnabled && (
                   <p>
                     <a
-                      className="google-login"
+                      className="google-wallet-button"
                       href="/api/wallet/save"
                       referrerPolicy="no-referrer"
                       onClick={(event) => {
