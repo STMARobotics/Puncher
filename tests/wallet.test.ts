@@ -51,7 +51,7 @@ describe("Google Wallet attendance passes", () => {
       aud: "google",
       typ: "savetowallet",
       iat: 1793880000,
-      origins: ["puncher.7028robotics.com"],
+      origins: ["https://puncher.7028robotics.com"],
       payload: {
         genericObjects: [
           {
@@ -63,7 +63,7 @@ describe("Google Wallet attendance passes", () => {
       },
     });
     expect(claims.payload.genericObjects[0].id).toMatch(
-      /^BCR2DN6D6CVPJD2U\.member-[a-f0-9]{64}$/,
+      /^BCR2DN6D6CVPJD2U\.m-[a-f0-9]{16}$/
     );
     expect(claims.payload.genericObjects[0].id).not.toContain("member-a");
   });
