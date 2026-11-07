@@ -207,7 +207,13 @@ export async function dispatch(req: Request, db: Store = store()) {
       );
     }
     if (path === "/api/me" && method === "GET")
-      return response(200, { id: p.id, role: p.role, barcode: p.barcode });
+      return response(200, {
+        id: p.id,
+        role: p.role,
+        barcode: p.barcode,
+        picture: p.picture,
+        displayName: p.displayName,
+      });
     mentor(p);
     if (path === "/api/mentor/members" && method === "GET")
       return response(200, await app.memberDirectory(p));

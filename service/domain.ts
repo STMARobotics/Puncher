@@ -924,6 +924,7 @@ export class Puncher {
     const present: {
       memberId: string;
       displayName: string;
+      picture?: string;
       cutoffAt: string;
       isMentor: boolean;
     }[] = [];
@@ -957,6 +958,7 @@ export class Puncher {
           return {
             memberId: member.memberId,
             displayName: memberDisplayName(member.email, member.displayName),
+            picture: member.picture,
             cutoffAt: session.cutoffAt as string,
             isMentor: session.isMentor === true,
           };
@@ -983,10 +985,16 @@ export class Puncher {
       shopOpen: (shop?.mentorCount ?? 0) > 0,
       mentors: members
         .filter((member) => member.isMentor)
-        .map(({ displayName }) => ({ displayName })),
+        .map(({ displayName, picture }) => ({
+          displayName,
+          ...(picture ? { picture } : {}),
+        })),
       occupants: members
         .filter((member) => !member.isMentor)
-        .map(({ displayName }) => ({ displayName })),
+        .map(({ displayName, picture }) => ({
+          displayName,
+          ...(picture ? { picture } : {}),
+        })),
       asOf,
       validUntil,
     };

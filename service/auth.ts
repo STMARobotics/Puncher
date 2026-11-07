@@ -99,7 +99,14 @@ export async function human(
     "Your Puncher access is disabled.",
     403,
   );
-  return { kind: "human", id: sub, role: user.role, barcode: user.barcode };
+  return {
+    kind: "human",
+    id: sub,
+    role: user.role,
+    barcode: user.barcode,
+    picture: user.picture,
+    displayName: user.displayName,
+  };
 }
 export async function device(
   headers: Record<string, string | undefined>,

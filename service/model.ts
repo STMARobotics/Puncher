@@ -13,7 +13,14 @@ export const roles = ["STUDENT", "MENTOR", "ADMIN"] as const;
 export type Role = (typeof roles)[number];
 export const eventTypes = ["OUTREACH", "COMPETITION"] as const;
 export type EventType = (typeof eventTypes)[number];
-export type Human = { kind: "human"; id: string; role: Role; barcode?: string };
+export type Human = {
+  kind: "human";
+  id: string;
+  role: Role;
+  barcode?: string;
+  picture?: string;
+  displayName?: string;
+};
 export type Principal =
   Human | { kind: "device"; id: string; expiresAt?: string };
 export const staffsShop = (role: unknown) =>

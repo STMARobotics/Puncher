@@ -5,11 +5,21 @@ import { key, row, uid } from "../service/model";
 import { dispatch } from "../service/api";
 it("shows current names only, sorted, and removes people after checkout", async () => {
   const { app, db, advance } = await fixture();
+  await atomic(db, async (tx) => {
+    const member = (await tx.get(key("USER#member-a")))!;
+    await tx.put({
+      ...member,
+      picture: "https://lh3.googleusercontent.com/a/alex",
+    });
+  });
   await app.scan(device, "000456", uid());
   await app.scan(device, "000123", uid());
   const result = await app.kioskOccupants(device);
   expect(result.occupants).toEqual([
-    { displayName: "Alex Example" },
+    {
+      displayName: "Alex Example",
+      picture: "https://lh3.googleusercontent.com/a/alex",
+    },
     { displayName: "Jordan Sample" },
   ]);
   expect(Object.keys(result).sort()).toEqual([
@@ -31,7 +41,10 @@ it("shows current names only, sorted, and removes people after checkout", async 
     await tx.put({ ...user, email, displayName: email });
   });
   expect((await app.kioskOccupants(device)).occupants).toEqual([
-    { displayName: "Alex Smith-Jones" },
+    {
+      displayName: "Alex Smith-Jones",
+      picture: "https://lh3.googleusercontent.com/a/alex",
+    },
     { displayName: "Jordan Sample" },
   ]);
   advance(6);
@@ -66,7 +79,9 @@ it("ignores stale active pointers, completed sessions, and deactivated members",
         cutoffAt: "2099-01-01T00:00:00.000Z",
       }),
     );
-    const session = await tx.get(key("ATTENDANCE#member-a", current!.sessionSk));
+    const session = await tx.get(
+      key("ATTENDANCE#member-a", current!.sessionSk),
+    );
     await tx.put({ ...session!, status: "completed" });
   });
   await atomic(db, async (tx) => {

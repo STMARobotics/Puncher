@@ -97,7 +97,7 @@ export async function beginGoogleSignIn(db: Store): Promise<HttpResult> {
     client_id: c.googleClientId,
     redirect_uri: `${c.origin}/api/auth/callback`,
     response_type: "code",
-    scope: "openid email",
+    scope: "openid email profile",
     state,
     nonce,
     code_challenge: challenge,
@@ -112,6 +112,7 @@ export async function beginGoogleSignIn(db: Store): Promise<HttpResult> {
 type OAuthOptions = {
   secret?: () => Promise<string>;
   exchange?: typeof fetch;
+  userinfo?: typeof fetch;
   verify?: Verify;
   now?: () => Date;
 };
@@ -175,7 +176,10 @@ export async function finishGoogleSignIn(
       "Google sign-in could not be completed. Please try again.",
       401,
     );
-    const tokens = (await response.json()) as { id_token?: string };
+    const tokens = (await response.json()) as {
+      id_token?: string;
+      access_token?: string;
+    };
     assert(tokens.id_token, "Google did not return an identity token.", 401);
     const verify = options.verify || verifyGoogle;
     const payload = await verify(tokens.id_token, c.googleClientId);
@@ -187,7 +191,50 @@ export async function finishGoogleSignIn(
       401,
     );
     assertGoogleIdentity(payload, c.googleClientId);
-    await registerUser(db, payload);
+    let profile = payload;
+    if (!payload.name || !payload.picture) {
+      assert(
+        tokens.access_token,
+        "Google did not return an access token to load your profile.",
+        401,
+      );
+      const profileResponse = await (options.userinfo || fetch)(
+        "https://openidconnect.googleapis.com/v1/userinfo",
+        {
+          headers: { authorization: `Bearer ${tokens.access_token}` },
+          signal: AbortSignal.timeout(10000),
+        },
+      );
+      assert(
+        profileResponse.ok,
+        "Google profile could not be loaded. Please try signing in again.",
+        401,
+      );
+      const googleProfile = (await profileResponse.json()) as {
+        sub?: unknown;
+        name?: unknown;
+        picture?: unknown;
+      };
+      assert(
+        googleProfile.sub === payload.sub,
+        "Google profile could not be verified. Please try signing in again.",
+        401,
+      );
+      profile = {
+        ...payload,
+        name:
+          payload.name ||
+          (typeof googleProfile.name === "string"
+            ? googleProfile.name
+            : undefined),
+        picture:
+          payload.picture ||
+          (typeof googleProfile.picture === "string"
+            ? googleProfile.picture
+            : undefined),
+      };
+    }
+    await registerUser(db, profile);
     const sessionToken = randomBytes(32).toString("base64url");
     const now = options.now?.() || new Date();
     const expires = new Date(now.getTime() + SESSION_SECONDS * 1000);

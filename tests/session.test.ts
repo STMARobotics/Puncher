@@ -33,19 +33,47 @@ describe("server-managed OAuth sessions", () => {
     const { db } = await fixture();
     const sub = "first-time-student";
     const userKey = key("USER#" + sub);
-    const signIn = async (emailVerified = true) => {
+    const signIn = async (
+      emailVerified = true,
+      name = "First Student",
+      picture: string | null = "https://lh3.googleusercontent.com/a/test",
+      googleProfile?: { name?: string; picture?: string },
+    ) => {
       const start = await beginGoogleSignIn(db);
-      const state = new URL(start.headers.location as string).searchParams.get(
-        "state",
-      )!;
+      const loginUrl = new URL(start.headers.location as string);
+      expect(loginUrl.searchParams.get("scope")).toBe("openid email profile");
+      const state = loginUrl.searchParams.get("state")!;
       const cookie = (start.headers["set-cookie"] as string[])[0].split(";")[0];
       const pending = await db.get(key("OAUTH#" + hash(state)));
       return finishGoogleSignIn({ code: "test-code", state }, { cookie }, db, {
         secret: async () => "test-secret",
-        exchange: async () => Response.json({ id_token: "test-token" }),
+        exchange: async () =>
+          Response.json({
+            id_token: "test-token",
+            ...(googleProfile ? { access_token: "test-access-token" } : {}),
+          }),
+        ...(googleProfile
+          ? {
+              userinfo: async (
+                url: string | URL | Request,
+                init?: RequestInit,
+              ) => {
+                expect(url).toBe(
+                  "https://openidconnect.googleapis.com/v1/userinfo",
+                );
+                expect(new Headers(init?.headers).get("authorization")).toBe(
+                  "Bearer test-access-token",
+                );
+                return Response.json({
+                  sub,
+                  ...googleProfile,
+                });
+              },
+            }
+          : {}),
         verify: async () => ({
           sub,
-          name: "First Student",
+          name,
           iss: "accounts.google.com",
           aud: "test-client",
           hd: "stmarobotics.org",
@@ -54,6 +82,7 @@ describe("server-managed OAuth sessions", () => {
           exp: Date.now() / 1000 + 300,
           iat: Date.now() / 1000,
           nonce: pending!.nonce,
+          ...(picture ? { picture } : {}),
         }),
       });
     };
@@ -65,6 +94,7 @@ describe("server-managed OAuth sessions", () => {
       memberId: sub,
       role: "STUDENT",
       displayName: "First Student",
+      picture: "https://lh3.googleusercontent.com/a/test",
     });
     expect(user?.barcode).toMatch(/^\d{6}$/);
     expect(await db.get(key("CARD#" + user?.barcode))).toMatchObject({
@@ -85,8 +115,42 @@ describe("server-managed OAuth sessions", () => {
         id: sub,
         role: "STUDENT",
         barcode: user?.barcode,
+        picture: "https://lh3.googleusercontent.com/a/test",
+        displayName: "First Student",
       });
     }
+    await signIn(
+      true,
+      "Updated Student",
+      "https://lh3.googleusercontent.com/a/updated",
+    );
+    await atomic(db, async (tx) => {
+      const current = (await tx.get(userKey))!;
+      await tx.put({ ...current, name: "Duplicate stale name" });
+    });
+    expect(await db.get(userKey)).toMatchObject({
+      displayName: "Updated Student",
+      picture: "https://lh3.googleusercontent.com/a/updated",
+    });
+    await signIn(
+      true,
+      "Updated Student",
+      "https://lh3.googleusercontent.com/a/updated",
+    );
+    const synchronized = await db.get(userKey);
+    expect(synchronized).not.toHaveProperty("name");
+    await signIn(true, "Updated Student", null, {
+      name: "Updated Student",
+      picture: "https://lh3.googleusercontent.com/a/userinfo",
+    });
+    expect(await db.get(userKey)).toMatchObject({
+      displayName: "Updated Student",
+      picture: "https://lh3.googleusercontent.com/a/userinfo",
+    });
+    await signIn(true, "Updated Student", null, { name: "Updated Student" });
+    const refreshed = await db.get(userKey);
+    expect(refreshed).toMatchObject({ displayName: "Updated Student" });
+    expect(refreshed).not.toHaveProperty("picture");
     await atomic(db, (tx) => tx.put({ ...user!, active: false }));
     expect((await signIn()).statusCode).toBe(403);
   });
@@ -263,6 +327,8 @@ describe("server-managed OAuth sessions", () => {
       email_verified: true,
       exp: Date.now() / 1000 + 300,
       nonce: pending!.nonce,
+      name: "Local Administrator",
+      picture: "https://lh3.googleusercontent.com/a/admin",
     };
     const finish = await finishGoogleSignIn(
       { code: "authorization-code", state },

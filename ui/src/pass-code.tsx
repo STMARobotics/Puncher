@@ -27,25 +27,27 @@ export default function PassCode({
   const code = (
     <canvas className="pass-code" role="img" aria-label={label} ref={canvas} />
   );
-  if (qr) return code;
   return (
     <div>
       <button
         type="button"
         className="barcode-copy"
-        aria-label="Copy barcode ID"
+        aria-label={qr ? "Copy QR code value" : "Copy barcode ID"}
         onClick={async () => {
           try {
             await navigator.clipboard.writeText(value);
-            setFeedback("Barcode ID copied.");
+            setFeedback(qr ? "QR code value copied." : "Barcode ID copied.");
           } catch {
-            setFeedback("Clipboard unavailable. Barcode ID: " + value);
+            setFeedback(
+              `Clipboard unavailable. ${qr ? "QR code value" : "Barcode ID"}: ` +
+                value,
+            );
           }
         }}
       >
         {code}
       </button>
-      <p role="status">{feedback}</p>
+      {feedback && <p role="status">{feedback}</p>}
     </div>
   );
 }

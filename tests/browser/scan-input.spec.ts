@@ -64,6 +64,16 @@ test("manual typing with normal pauses works after the first successful clock-in
   expect(scans).toHaveLength(2);
   expect(scans.map((scan) => scan.barcode)).toEqual(["000123", "000123"]);
 });
+test("pasting a barcode clocks in through the scan buffer", async ({ page }) => {
+  const scans = await mockKiosk(page);
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.evaluate(() => navigator.clipboard.writeText("000123"));
+  await page.keyboard.press("ControlOrMeta+V");
+  await expect(
+    page.getByRole("heading", { name: "CLOCKED IN", exact: true }),
+  ).toBeVisible();
+  expect(scans.map((scan) => scan.barcode)).toEqual(["000123"]);
+});
 test("manual entry supports Backspace, select-all replacement, and cancellation", async ({
   page,
 }) => {

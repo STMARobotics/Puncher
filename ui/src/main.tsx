@@ -22,7 +22,13 @@ type Config = {
   localFixtures: boolean;
   walletEnabled: boolean;
 };
-type Person = { id: string; role: Role; barcode: string };
+type Person = {
+  id: string;
+  role: Role;
+  barcode: string;
+  picture?: string;
+  displayName?: string;
+};
 function App() {
   const [config, setConfig] = useState<Config>(),
     [page, setPage] = useState(
@@ -170,9 +176,16 @@ function App() {
             {isMentor && (
               <nav aria-label="Main navigation">{mentorActions}</nav>
             )}
-            <button className="secondary sign-out" onClick={signOut}>
-              Sign out
-            </button>
+            <div className="account-actions">
+              <Avatar
+                picture={person.picture}
+                name={person.displayName || "Your account"}
+                className="account-avatar"
+              />
+              <button className="secondary sign-out" onClick={signOut}>
+                Sign out
+              </button>
+            </div>
           </>
         )}
       </header>
@@ -346,6 +359,7 @@ function Kiosk() {
     [enteredCharacters, setEnteredCharacters] = useState(0),
     [scanPulse, setScanPulse] = useState(0);
   const input = useRef<HTMLInputElement>(null),
+    scannerRef = useRef<ScanBuffer | null>(null),
     generation = useRef(0),
     last = useRef(new Map<string, number>()),
     pending = useRef<any>(null),
@@ -543,6 +557,7 @@ function Kiosk() {
         },
       },
     );
+    scannerRef.current = scanner;
     const keydown = (e: KeyboardEvent) => {
       if (e.target instanceof Element && e.target.closest("select,button,a"))
         return;
@@ -577,6 +592,7 @@ function Kiosk() {
     window.addEventListener("focus", focus);
     window.addEventListener("blur", blur);
     return () => {
+      if (scannerRef.current === scanner) scannerRef.current = null;
       window.removeEventListener("keydown", keydown);
       window.removeEventListener("focus", focus);
       window.removeEventListener("blur", blur);
@@ -658,20 +674,14 @@ function Kiosk() {
               className="scanner-input"
               aria-label="Student ID scanner input"
               autoComplete="off"
-              onPaste={(e) => {
-                e.preventDefault();
-                if (pending.current || busy.current) return;
-                const g = ++generation.current;
-                setError("Pasted card data is not accepted. Scan your card.");
-                setState("error");
-                timers.current.push(
-                  setTimeout(() => {
-                    if (generation.current === g) {
-                      setState("ready");
-                      setError("");
-                    }
-                  }, 5000),
-                );
+              onPaste={(event) => {
+                event.preventDefault();
+                const value = event.clipboardData.getData("text").trim();
+                const scanner = scannerRef.current;
+                if (!value || !scanner) return;
+                const now = Date.now();
+                for (const character of value) scanner.key(character, now);
+                scanner.key("Enter", now);
               }}
               onBlur={(event) => {
                 const target = event.relatedTarget;
@@ -785,7 +795,32 @@ function Retry({ pending, send, state }: any) {
   }, [state]);
   return null;
 }
-type Occupant = { displayName: string };
+type Occupant = { displayName: string; picture?: string };
+function Avatar({
+  picture,
+  name,
+  className = "",
+}: {
+  picture?: string;
+  name: string;
+  className?: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <span className={`profile-avatar ${className}`} aria-hidden="true">
+      {picture && !failed ? (
+        <img
+          src={picture}
+          alt=""
+          referrerPolicy="no-referrer"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        name.trim().charAt(0).toUpperCase() || "?"
+      )}
+    </span>
+  );
+}
 function InShop({
   revision,
   onShopState,
@@ -888,11 +923,12 @@ function InShop({
                   </p>
                 ) : (
                   <ul className="presence-grid">
-                    {named.map(({ displayName }, index) => (
+                    {named.map(({ displayName, picture }, index) => (
                       <li
                         className="presence-card"
                         key={displayName + "-" + index}
                       >
+                        <Avatar picture={picture} name={displayName} />
                         {displayName}
                       </li>
                     ))}
