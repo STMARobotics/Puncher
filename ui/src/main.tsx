@@ -944,7 +944,7 @@ function InShop({
                         key={displayName + "-" + index}
                       >
                         <Avatar picture={picture} name={displayName} />
-                        {displayName}
+                        <span className="presence-name">{displayName}</span>
                       </li>
                     ))}
                   </ul>

@@ -342,12 +342,12 @@ test("the kiosk keeps 60 occupants in compact columns and ends when its server c
   await expect(
     page
       .getByRole("region", { name: "Mentors", exact: true })
-      .getByRole("listitem"),
+      .locator(".presence-name"),
   ).toHaveText(Array.from({ length: 20 }, (_, index) => "Mentor " + index));
   await expect(
     page
       .getByRole("region", { name: "Students", exact: true })
-      .getByRole("listitem"),
+      .locator(".presence-name"),
   ).toHaveText(Array.from({ length: 40 }, (_, index) => "Student " + index));
   await expect(page.getByText("SHOP OPEN", { exact: true })).toBeVisible();
   await page.clock.fastForward(5100);
