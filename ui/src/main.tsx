@@ -10,6 +10,7 @@ import { api, setToken, duration, time } from "./api";
 import { MentorConsole, type DirectoryMember } from "./mentor-console";
 import { ScanBuffer } from "./scanner";
 import { ScanEffects } from "./scan-effects";
+import { playClosingTime, primeClosingTimeAudio } from "./closing-time";
 import { PuncherMark } from "./puncher-mark";
 import { activateKioskSession, KioskActivation } from "./kiosk-activation";
 import type { EventType, Role } from "../../service/model";
@@ -364,6 +365,7 @@ function Kiosk() {
     last = useRef(new Map<string, number>()),
     pending = useRef<any>(null),
     busy = useRef(false),
+    closingTimeAudioReady = useRef<Promise<boolean> | undefined>(undefined),
     timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const [now, setNow] = useState(new Date());
   useEffect(() => {
@@ -423,6 +425,18 @@ function Kiosk() {
     setError("");
     pending.current = null;
     sessionStorage.removeItem("puncher-pending");
+    if (saved.shopClosed) {
+      void (closingTimeAudioReady.current ?? Promise.resolve(false))
+        .then(async (ready) => {
+          if (!ready) throw new Error("Audio playback is blocked.");
+          await playClosingTime();
+        })
+        .catch(() => {
+          setError(
+            "Closing Time could not play. Check the kiosk audio settings.",
+          );
+        });
+    }
     const g = ++generation.current;
     if (saved.warning) {
       timers.current.push(
@@ -512,6 +526,7 @@ function Kiosk() {
     const t = Date.now();
     if (t - (last.current.get(card) || 0) < 5000) return;
     last.current.set(card, t);
+    closingTimeAudioReady.current = primeClosingTimeAudio();
     send({ barcode: card, operationId: crypto.randomUUID() });
   };
   const submitRef = useRef(submit);

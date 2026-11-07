@@ -29,6 +29,7 @@ it("starts the mentor only when the QR is redeemed, without duplicating an activ
   expect(await app.scan(device, pass.barcode, uid())).toMatchObject({
     state: "out",
     creditedSeconds: 30,
+    shopClosed: true,
   });
   expect((await app.kioskOccupants(device)).shopOpen).toBe(false);
 });
@@ -46,10 +47,10 @@ it("preserves active visits, permits closed-shop checkouts, and resumes credit w
   await scan("000456");
   const before = await db.get(key("ATTENDANCE#member-a", "CURRENT"));
   advance(60);
-  await scan(lead.barcode);
+  expect(await scan(lead.barcode)).not.toHaveProperty("shopClosed");
   expect((await app.kioskOccupants(device)).shopOpen).toBe(true);
   advance(30);
-  await scan(other.barcode);
+  expect(await scan(other.barcode)).toHaveProperty("shopClosed", true);
   expect(await app.kioskOccupants(device)).toMatchObject({
     shopOpen: false,
     mentors: [],

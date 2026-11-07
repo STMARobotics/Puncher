@@ -1,7 +1,10 @@
 import { test, expect } from "@playwright/test";
 import { PNG } from "pngjs";
 
-async function mockKiosk(page: import("@playwright/test").Page) {
+async function mockKiosk(
+  page: import("@playwright/test").Page,
+  closesShop = false,
+) {
   const scans: { barcode: string; operationId: string }[] = [];
   await page.clock.install({ time: new Date("2026-11-02T18:00:00.000Z") });
   await page.route("**/api/kiosk/**", async (route) => {
@@ -16,6 +19,7 @@ async function mockKiosk(page: import("@playwright/test").Page) {
           endedAt: "2026-11-02T18:01:00.000Z",
           creditedSeconds: 60,
           todaySeconds: 60,
+          ...(closesShop && scans.length === 2 ? { shopClosed: true } : {}),
         },
       });
     }
@@ -43,6 +47,26 @@ async function mockKiosk(page: import("@playwright/test").Page) {
   await expect(page.getByLabel("Student ID scanner input")).toBeFocused();
   return scans;
 }
+test("playing Closing Time when the last mentor clocks out", async ({
+  page,
+}) => {
+  const midiRequest = page.waitForRequest((request) =>
+    request.url().endsWith("/Semisonic_-_Closing_Time.mid"),
+  );
+  await mockKiosk(page, true);
+  await page.keyboard.type("000123");
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("heading", { name: "CLOCKED IN", exact: true }),
+  ).toBeVisible();
+  await page.clock.runFor(5100);
+  await page.keyboard.type("000123");
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("heading", { name: "CLOCKED OUT", exact: true }),
+  ).toBeVisible();
+  await midiRequest;
+});
 test("manual typing with normal pauses works after the first successful clock-in", async ({
   page,
 }) => {

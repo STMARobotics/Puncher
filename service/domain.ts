@@ -332,6 +332,7 @@ export class Puncher {
             ),
           ) / 1000,
         );
+        const shopClosed = session.isMentor && shop?.mentorCount === 1;
         if (session.isMentor)
           await this.changeMentorCount(tx, day, shop, timestamp, -1);
         await tx.put({
@@ -357,6 +358,7 @@ export class Puncher {
           creditedSeconds: seconds,
           todaySeconds: previous + seconds,
           warning: cur.warning,
+          ...(shopClosed ? { shopClosed: true } : {}),
         };
         cur = { ...cur, sessionId: null, sessionSk: null };
       } else {
