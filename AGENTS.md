@@ -17,3 +17,9 @@ Puncher is a low-priority application. Low idle cost is more important than avai
 - Do not run browser, database, or cross-app integration tests for documentation-only changes.
 - Do not add matrices, self-hosted/hosted workers, scheduled workflows, repeated builds, or broad monorepo rebuilds without confirmation.
 - Cancel superseded runs and avoid testing feature-branch pushes; pull requests and `main` are the normal verification surfaces.
+
+## Shared contracts
+
+- Whenever changing `cdk/lib/activity-publisher.ts`, `service/activity-contract.ts`, or anything under `contracts/`, run `npm run check:activity-contract`.
+- Treat `contracts/activity-contract.v1.sha256.json` as an implementation-locked contract. If the publisher hash changes, inspect the event/template/filter diff and update the manifest only after confirming the actual activity wire contract is still correct.
+- Do not only run or update the hash check: preserve or update the fixture and round-trip assertions in `scripts/check-activity-contract.cjs` when wire behavior changes.
