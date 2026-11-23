@@ -6,8 +6,6 @@ import {
   aws_iam as iam,
   aws_lambda as lambda,
   aws_pipes as pipes,
-  aws_sqs as sqs,
-  aws_cloudwatch as cw,
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 export type ActivityIntegration = {
@@ -64,18 +62,12 @@ export function configureActivityPublisher(
   }
   if (!table.tableStreamArn)
     throw new Error('Enable the activity outbox stream before creating its pipe.');
-  const dead = new sqs.Queue(scope, 'ActivityPublishFailures', {
-    encryption: sqs.QueueEncryption.SQS_MANAGED,
-    enforceSSL: true,
-    retentionPeriod: Duration.days(14),
-  });
   const role = new iam.Role(scope, 'ActivityPublisherRole', {
     assumedBy: new iam.ServicePrincipal('pipes.amazonaws.com', {
       conditions: { StringEquals: { 'aws:SourceAccount': Stack.of(scope).account } },
     }),
   });
   table.grantStreamRead(role);
-  dead.grantSendMessages(role);
   role.addToPolicy(
     new iam.PolicyStatement({
       actions: ['events:PutEvents'],
@@ -112,7 +104,6 @@ export function configureActivityPublisher(
         maximumRecordAgeInSeconds: 82800,
         maximumRetryAttempts: 10000,
         onPartialBatchItemFailure: 'AUTOMATIC_BISECT',
-        deadLetterConfig: { arn: dead.queueArn },
       },
     },
     targetParameters: {
@@ -125,23 +116,5 @@ export function configureActivityPublisher(
   });
   // Make grants available before the service validates/starts the pipe.
   pipe.node.addDependency(role);
-  new cw.Alarm(scope, 'ActivityPublishDeadLetters', {
-    metric: dead.metricApproximateNumberOfMessagesVisible(),
-    threshold: 1,
-    evaluationPeriods: 1,
-    treatMissingData: cw.TreatMissingData.NOT_BREACHING,
-  });
-  new cw.Alarm(scope, 'ActivityPublishErrors', {
-    metric: new cw.Metric({
-      namespace: 'AWS/Pipes',
-      metricName: 'ExecutionFailed',
-      dimensionsMap: { PipeName: pipe.ref },
-      period: Duration.minutes(5),
-      statistic: 'Sum',
-    }),
-    threshold: 1,
-    evaluationPeriods: 1,
-    treatMissingData: cw.TreatMissingData.NOT_BREACHING,
-  });
   return pipe;
 }

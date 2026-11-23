@@ -18,6 +18,6 @@ Before production, manually verify and record these on actual hardware (not comp
 - Dedicated computer startup/kiosk, sleep settings, lost focus, USB reconnect, network disconnect during save and reconnect/reload.
 - iPhone Safari and Android Chrome mentor sign-in, event creation and adding participants by name.
 - A real local-midnight scenario (plus DST calendar tests): unfinished visit expires, completed earlier time remains, next scan starts a new visit with warning, delayed cleanup cannot clear it.
-- Production Google/OIDC audience/origin setup, direct API auth denial, kiosk revocation, SNS alarm delivery, cleanup failure queue and separately deployed Stats read-only integration.
+- Production Google/OIDC audience/origin setup, direct API auth denial, kiosk revocation, manual cleanup failure checks and separately deployed Stats read-only integration.
 
 Automated Chromium desktop and narrow mobile viewport checks do not establish Safari, Android Chrome, scanner or operating-system acceptance.

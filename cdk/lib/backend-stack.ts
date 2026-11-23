@@ -8,11 +8,7 @@ import {
   aws_apigatewayv2_authorizers as auth,
   aws_apigatewayv2_integrations as integrations,
   aws_iam as iam,
-  aws_sqs as sqs,
   aws_scheduler as scheduler,
-  aws_cloudwatch as cw,
-  aws_sns as sns,
-  aws_cloudwatch_actions as actions,
 } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import { resolve } from "node:path";
@@ -35,27 +31,16 @@ export class BackendStack extends cdk.Stack {
       partitionKey: { name: "pk", type: ddb.AttributeType.STRING },
       sortKey: { name: "sk", type: ddb.AttributeType.STRING },
       billingMode: ddb.BillingMode.PAY_PER_REQUEST,
-      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
       deletionProtection: true,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       timeToLiveAttribute: "ttl",
       encryption: ddb.TableEncryption.AWS_MANAGED,
     });
-    for (const i of [1, 2])
-      this.table.addGlobalSecondaryIndex({
-        indexName: `GSI${i}`,
-        partitionKey: { name: `gsi${i}pk`, type: ddb.AttributeType.STRING },
-        sortKey: { name: `gsi${i}sk`, type: ddb.AttributeType.STRING },
-        projectionType: ddb.ProjectionType.ALL,
-      });
-    const topic = new sns.Topic(this, "OperationalAlarms", {
-      topicName: `${prefix}-alarms`,
-    });
-    const dlq = new sqs.Queue(this, "CleanupFailures", {
-      queueName: `${prefix}-cleanup-failures`,
-      enforceSSL: true,
-      encryption: sqs.QueueEncryption.SQS_MANAGED,
-      retentionPeriod: cdk.Duration.days(14),
+    this.table.addGlobalSecondaryIndex({
+      indexName: "GSI1",
+      partitionKey: { name: "gsi1pk", type: ddb.AttributeType.STRING },
+      sortKey: { name: "gsi1sk", type: ddb.AttributeType.STRING },
+      projectionType: ddb.ProjectionType.ALL,
     });
     const create = (
       name: string,
@@ -65,7 +50,7 @@ export class BackendStack extends cdk.Stack {
     ) => {
       const logGroup = new logs.LogGroup(this, `${name}Logs`, {
         logGroupName: `/puncher/${name}`,
-        retention: logs.RetentionDays.ONE_MONTH,
+        retention: logs.RetentionDays.ONE_WEEK,
         removalPolicy: cdk.RemovalPolicy.RETAIN,
       });
       const f = new nodejs.NodejsFunction(this, name, {
@@ -74,7 +59,7 @@ export class BackendStack extends cdk.Stack {
         handler,
         runtime: lambda.Runtime.NODEJS_24_X,
         architecture: lambda.Architecture.ARM_64,
-        memorySize: 512,
+        memorySize: 256,
         timeout: cdk.Duration.seconds(name === "Cleanup" ? 900 : 25),
         logGroup,
         bundling: {
@@ -93,12 +78,6 @@ export class BackendStack extends cdk.Stack {
           ...extra,
         },
       });
-      new cw.Alarm(this, `${name}Errors`, {
-        metric: f.metricErrors(),
-        threshold: 1,
-        evaluationPeriods: 1,
-        treatMissingData: cw.TreatMissingData.NOT_BREACHING,
-      }).addAlarmAction(new actions.SnsAction(topic));
       return f;
     };
     const humans = create(
@@ -363,7 +342,7 @@ export class BackendStack extends cdk.Stack {
     stage.defaultRouteSettings = {
       throttlingBurstLimit: 30,
       throttlingRateLimit: 20,
-      detailedMetricsEnabled: true,
+      detailedMetricsEnabled: false,
     };
     const schedulerRole = new iam.Role(this, "SchedulerRole", {
       assumedBy: new iam.ServicePrincipal("scheduler.amazonaws.com", {
@@ -371,7 +350,6 @@ export class BackendStack extends cdk.Stack {
       }),
     });
     cleanup.grantInvoke(schedulerRole);
-    dlq.grantSendMessages(schedulerRole);
     new scheduler.CfnSchedule(this, "Midnight", {
       name: `${prefix}-midnight`,
       scheduleExpression: "cron(0 0 * * ? *)",
@@ -381,49 +359,20 @@ export class BackendStack extends cdk.Stack {
         arn: cleanup.functionArn,
         roleArn: schedulerRole.roleArn,
         retryPolicy: {
-          maximumEventAgeInSeconds: 86400,
-          maximumRetryAttempts: 185,
+          maximumEventAgeInSeconds: 3600,
+          maximumRetryAttempts: 2,
         },
-        deadLetterConfig: { arn: dlq.queueArn },
         input: "{}",
       },
     });
-    // Scheduler retries delivery; Lambda async failures are independently retried and sent to the same queue.
+    // Keep retries deliberately small: recoverability is not allowed to outrank low cost.
     cleanup.configureAsyncInvoke({
       retryAttempts: 2,
       maxEventAge: cdk.Duration.hours(6),
-      onFailure: { bind: () => ({ destination: dlq.queueArn }) },
     });
-    dlq.grantSendMessages(cleanup);
-    new cw.Alarm(this, "DeadLetters", {
-      metric: dlq.metricApproximateNumberOfMessagesVisible(),
-      threshold: 1,
-      evaluationPeriods: 1,
-      treatMissingData: cw.TreatMissingData.NOT_BREACHING,
-    }).addAlarmAction(new actions.SnsAction(topic));
-    new cw.Alarm(this, "CleanupMissing", {
-      metric: cleanup.metricInvocations({ period: cdk.Duration.days(1) }),
-      comparisonOperator: cw.ComparisonOperator.LESS_THAN_THRESHOLD,
-      threshold: 1,
-      evaluationPeriods: 1,
-      treatMissingData: cw.TreatMissingData.BREACHING,
-    }).addAlarmAction(new actions.SnsAction(topic));
-    new cw.Alarm(this, "ApiServerErrors", {
-      metric: new cw.Metric({
-        namespace: "AWS/ApiGateway",
-        metricName: "5xx",
-        dimensionsMap: { ApiId: this.api.apiId },
-        statistic: "Sum",
-        period: cdk.Duration.minutes(5),
-      }),
-      threshold: 1,
-      evaluationPeriods: 1,
-      treatMissingData: cw.TreatMissingData.NOT_BREACHING,
-    }).addAlarmAction(new actions.SnsAction(topic));
     new cdk.CfnOutput(this, "TableName", { value: this.table.tableName });
     new cdk.CfnOutput(this, "TableArn", { value: this.table.tableArn });
     new cdk.CfnOutput(this, "TableRegion", { value: this.region });
-    new cdk.CfnOutput(this, "AlarmTopicArn", { value: topic.topicArn });
     new cdk.CfnOutput(this, "ApiEndpoint", { value: this.api.apiEndpoint });
   }
 }

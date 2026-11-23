@@ -95,17 +95,19 @@ it.skipIf(
       expect(fn.Properties.Environment.Variables.INTEGRATION_ENABLED).toBeUndefined();
     expect(table.DeletionPolicy).toBe("Retain");
     expect(table.Properties.DeletionProtectionEnabled).toBe(true);
-    expect(
-      table.Properties.PointInTimeRecoverySpecification
-        .PointInTimeRecoveryEnabled,
-    ).toBe(true);
+    expect(table.Properties.PointInTimeRecoverySpecification).toBeUndefined();
     expect(table.Properties.BillingMode).toBe("PAY_PER_REQUEST");
     const schedule = resources(backend, "AWS::Scheduler::Schedule")[0]
       .Properties;
     expect(schedule.ScheduleExpressionTimezone).toBe("America/Chicago");
     expect(schedule.FlexibleTimeWindow.Mode).toBe("OFF");
-    expect(schedule.Target.RetryPolicy.MaximumRetryAttempts).toBeGreaterThan(0);
-    expect(schedule.Target.DeadLetterConfig).toBeTruthy();
+    expect(schedule.Target.RetryPolicy.MaximumRetryAttempts).toBe(2);
+    expect(schedule.Target.DeadLetterConfig).toBeUndefined();
+    expect(table.Properties.GlobalSecondaryIndexes).toHaveLength(1);
+    expect(table.Properties.GlobalSecondaryIndexes[0].IndexName).toBe("GSI1");
+    expect(JSON.stringify(backend)).not.toContain("AWS::SNS::Topic");
+    expect(JSON.stringify(backend)).not.toContain("AWS::SQS::Queue");
+    expect(JSON.stringify(backend)).not.toContain("AWS::CloudWatch::Alarm");
     for (const a of resources(backend, "AWS::ApiGatewayV2::Authorizer"))
       expect(a.Properties.AuthorizerResultTtlInSeconds).toBe(0);
     expect(

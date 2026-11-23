@@ -22,11 +22,11 @@ Existing producer stacks create no stream or pipe unless their CDK app context h
 
 Use real explicit development identifiers; the example is synthetic. Capture cannot be enabled until pipeEnabled is true. This context is not added to any existing deployment configuration by this change.
 
-Outbox rows have no TTL in this phase. They are queryable by OUTBOX#organization#source#UTC-capture-date. The hub archive retains 90 days. Streams retain only 24 hours: retry is configured below that window and a producer failure queue retains failures for 14 days. Recover longer outages by querying retained outbox dates and republishing original envelopes/IDs, then reconciling source records. A bounded replay command and long-term retention automation remain follow-up work. A stream ARN change requires replacing its Pipe.
+Outbox rows have no TTL in this phase. They are queryable by OUTBOX#organization#source#UTC-capture-date. The low-cost deployment does not retain an EventBridge archive or deploy producer failure queues. Streams retain only 24 hours. Recover outages by querying retained outbox dates and republishing original envelopes/IDs, then reconciling source records. A bounded replay command and optional paid recovery services remain follow-up work requiring confirmation. A stream ARN change requires replacing its Pipe.
 
 ## Rollout order and gates
 
-1. Review/merge compatible contracts and deploy the separate development bus/archive.
+1. Review/merge compatible contracts and deploy the separate development event bus.
 2. Deploy the Stats shadow subscription and worker, then explicitly enable it.
 3. Deploy producer infrastructure with capture disabled; start Pipes before enabling capture.
 4. Enable capture per app and compare shadow totals to canonical records. Validate real AWS transformation, delivery permissions, retry/DLQ recovery and stream replacement. Local synthesis is not live AWS acceptance.
@@ -34,13 +34,13 @@ Outbox rows have no TTL in this phase. They are queryable by OUTBOX#organization
 6. Add the Packs reward subscriber, effective-dated/capped policies, durable business award identities, reversals/debt, and ledger updates in existing player-version transactions. Keep rewards disabled until these checks pass.
 7. Enable reward issuance from an explicit date; do not automatically reward imports/replays. Resolve ownership of existing Packs mission rewards to avoid paying twice. Switch Stats only after comparison and authorization acceptance; add achievements and action-item support afterward.
 
-Separate consumer failure queues and partial batch responses isolate poison messages. Alarm resources exist for dead letters/errors/lag; connecting them to approved operational notification destinations is a deployment follow-up. No notification subscriptions are created here. Keep private API responses uncached and never grant browsers database or bus credentials.
+Keep the integration opt-in and low-cost. Producer and consumer failure queues, automatic archives, paid monitoring, and alarm/SNS notification destinations are not part of the default deployment. No notification subscriptions are created here. Keep private API responses uncached and never grant browsers database or bus credentials.
 
 ## Repository implementation
 
 The persistence boundary appends eligible credit snapshots in the same transaction, covering kiosk checkout, volunteer awards/voids, and approved import/review changes. Active, forfeited, pending and quarantined records produce no positive contribution. Read checks and internal audit/member/device rows do not generate events. Native subject IDs are Puncher member IDs.
 
-The separately deployable organization bus/archive are defined in cdk/lib/integration-stack.ts with the entrypoint cdk/bin/integration.ts. The default Puncher app does not deploy them. Synthesize locally using npm run cdk:synth:integration. Validation uses synthetic values, not a live integration.
+The separately deployable organization bus is defined in cdk/lib/integration-stack.ts with the entrypoint cdk/bin/integration.ts. The default Puncher app does not deploy it. Synthesize locally using npm run cdk:synth:integration. Validation uses synthetic values, not a live integration.
 
 Checks: npm run check; npm run test:db with an explicit loopback DYNAMODB_ENDPOINT. The new activity tests cover concurrent duplicate scans, transactional failure, volunteer reversals and imported-credit revisions.
 

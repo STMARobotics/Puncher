@@ -12,7 +12,7 @@ import {
   activityInputTemplate,
   activityOutboxPrefixes,
 } from '../lib/activity-publisher';
-it('retains the separate organization bus and filters its archive', () => {
+it('retains the separate organization bus without an archive', () => {
   const app = new App({ outdir: resolve('work/activity-hub-cdk') });
   const stack = new IntegrationStack(app, 'organization-integration', {
     env: { account: '111111111111', region: 'us-east-2' },
@@ -21,10 +21,7 @@ it('retains the separate organization bus and filters its archive', () => {
   });
   const t = Template.fromStack(stack);
   t.resourceCountIs('AWS::Events::EventBus', 1);
-  t.hasResourceProperties('AWS::Events::Archive', {
-    RetentionDays: 90,
-    EventPattern: { detail: { orgId: ['example-team'] } },
-  });
+  t.resourceCountIs('AWS::Events::Archive', 0);
   expect(Object.values(t.findResources('AWS::Events::EventBus'))[0].DeletionPolicy).toBe('Retain');
 });
 it('keeps publishing opt-in and sets exact bus grants and filtered INSERT-only delivery', () => {
